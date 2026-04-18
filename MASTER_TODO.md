@@ -2,10 +2,8 @@
 
 ## Active Tasks
 
-- [ ] Harden audit logging with file permissions and rotation.
-- [ ] Expand tests for lockout windows, expiry handling, corrupted database cases, and plaintext leak prevention.
-- [ ] Add import integrity checks and optional signed backup metadata.
-- [ ] Document operational guidance for Hermes write-gate policy and default-safe deployment.
+- [ ] Draft release checklist for v0.1.0 packaging and install flow validation.
+- [ ] Add CI workflow for lint and test execution on pull requests.
 
 ## Decisions And Ideas
 
@@ -29,3 +27,7 @@
 - [x] 2026-04-18 Added CLI commands for update, export, import, and change-password.
 - [x] 2026-04-18 Added backup export/import encryption and password rotation support in the vault service.
 - [x] 2026-04-18 Added Hermes-safe wrapper with capability-gated write actions and tests for default-deny behavior.
+- [x] 2026-04-18 Completed #4 by adding operator guidance for Hermes write-gate policy and default-safe deployment in docs/hermes-write-gate-operations.md.
+- [x] 2026-04-18 Completed #1 by hardening audit logging with owner-only file permissions and automatic log rotation.
+- [x] 2026-04-18 Completed #2 by adding lockout, expiry, corruption, and plaintext-leak prevention tests.
+- [x] 2026-04-18 Completed #3 by adding backup integrity signing, metadata signing coverage, and strict import integrity checks.

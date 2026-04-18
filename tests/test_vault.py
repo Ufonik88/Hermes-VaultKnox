@@ -103,6 +103,94 @@ def test_export_and_import_round_trip(tmp_path: Path) -> None:
     assert imported["metadata"]["service"] == "OpenAI"
 
 
+def test_import_rejects_tampered_backup(tmp_path: Path) -> None:
+    source = VaultKnox(expand_runtime_path(tmp_path / "source"))
+    destination = VaultKnox(expand_runtime_path(tmp_path / "destination"))
+    source.initialize("correct horse battery staple")
+    source.unlock("correct horse battery staple")
+    source.add_secret(
+        "correct horse battery staple",
+        "api_openai",
+        "api_key",
+        "OpenAI",
+        {"key": "sk-test", "service": "OpenAI", "scope": "full"},
+    )
+    export_file = tmp_path / "backup.vault"
+    source.export_vault("correct horse battery staple", str(export_file))
+
+    tampered = export_file.read_text(encoding="utf-8")
+    tampered = tampered.replace('"signature":"', '"signature":"deadbeef')
+    export_file.write_text(tampered, encoding="utf-8")
+
+    with pytest.raises(VaultError, match="Backup integrity check failed"):
+        destination.import_vault("correct horse battery staple", str(export_file))
+
+
+def test_lockout_enforced_after_max_attempts(vault: VaultKnox) -> None:
+    vault.initialize("correct horse battery staple", max_attempts=2, lockout_minutes=1)
+
+    with pytest.raises(VaultError, match="Invalid master password"):
+        vault.unlock("wrong")
+    with pytest.raises(VaultError, match="Invalid master password"):
+        vault.unlock("wrong")
+    with pytest.raises(VaultError, match="temporarily locked"):
+        vault.unlock("correct horse battery staple")
+
+
+def test_token_expiry_is_enforced(vault: VaultKnox) -> None:
+    vault.initialize("correct horse battery staple")
+    vault.unlock("correct horse battery staple")
+    vault.add_secret(
+        "correct horse battery staple",
+        "api_openai",
+        "api_key",
+        "OpenAI",
+        {"key": "sk-test", "service": "OpenAI", "scope": "full"},
+    )
+    token = vault.issue_token("api_openai", "integration", token_ttl_seconds=0)
+
+    with pytest.raises(VaultError, match="Token expired"):
+        vault.consume_token("correct horse battery staple", token)
+
+
+def test_corrupted_secret_payload_is_rejected(vault: VaultKnox) -> None:
+    vault.initialize("correct horse battery staple")
+    vault.add_secret(
+        "correct horse battery staple",
+        "private_note",
+        "note",
+        "Private Note",
+        {"content": "top secret"},
+    )
+    with vault.db.connection() as conn:
+        conn.execute("UPDATE secrets SET tag = ? WHERE id = ?", (b"x" * 16, "private_note"))
+
+    with pytest.raises(VaultError, match="Secret decryption failed"):
+        vault.get_secret("correct horse battery staple", "private_note")
+
+
+def test_audit_log_does_not_contain_plaintext_secret(vault: VaultKnox) -> None:
+    vault.initialize("correct horse battery staple")
+    vault.unlock("correct horse battery staple")
+    vault.add_secret(
+        "correct horse battery staple",
+        "revolut_card",
+        "card",
+        "Revolut Virtual Card",
+        {
+            "number": "4111111111111111",
+            "expiry": "12/28",
+            "cvv": "123",
+            "holder": "DJ C",
+            "bank": "Revolut",
+        },
+    )
+
+    audit_text = vault.paths.audit_log_path.read_text(encoding="utf-8")
+    assert "4111111111111111" not in audit_text
+    assert '"cvv":"123"' not in audit_text
+
+
 def test_stale_session_is_cleared(vault: VaultKnox) -> None:
     vault.initialize("correct horse battery staple")
     store = SessionStore(vault.paths.session_path, vault.paths.session_lock_path)

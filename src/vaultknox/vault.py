@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hmac
 import json
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -95,7 +97,11 @@ class VaultKnox:
         key = self._entry_key(password)
         row = self.db.get_secret_row(secret_id)
         encrypted = EncryptedPayload(nonce=row["nonce"], ciphertext=row["data"], tag=row["tag"])
-        secret = decrypt_payload(key, encrypted)
+        try:
+            secret = decrypt_payload(key, encrypted)
+        except Exception as exc:  # noqa: BLE001
+            write_audit_event(self.paths.audit_log_path, "get_raw", "failure", secret_id=secret_id)
+            raise VaultError("Secret decryption failed; data may be corrupted") from exc
         write_audit_event(self.paths.audit_log_path, "get_raw", "success", secret_id=secret_id)
         return {
             "id": row["id"],
@@ -128,19 +134,23 @@ class VaultKnox:
         write_audit_event(self.paths.audit_log_path, "issue_token", "success", secret_id=secret_id, details={"purpose": purpose})
         return token
 
-    def export_vault(self, password: str, export_file: str) -> dict[str, Any]:
+    def export_vault(self, password: str, export_file: str, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
         self._verify_password(password)
         backup_salt = generate_salt()
         backup_key = derive_scoped_key(derive_master_key(password, backup_salt), b"vaultknox-backup")
+        signing_key = derive_scoped_key(derive_master_key(password, backup_salt), b"vaultknox-backup-signature")
         nonce = generate_salt(NONCE_SIZE)
         encrypted = AESGCM(backup_key).encrypt(nonce, self.paths.db_path.read_bytes(), None)
-        backup = {
-            "version": 1,
+        backup_payload = {
+            "version": 2,
             "salt": backup_salt.hex(),
             "nonce": nonce.hex(),
             "ciphertext": encrypted.hex(),
             "created_at": datetime.now(timezone.utc).isoformat(),
+            "metadata": metadata or {},
         }
+        backup = dict(backup_payload)
+        backup["signature"] = self._backup_signature(signing_key, backup_payload)
         export_path = self.paths.base_dir / export_file if not Path(export_file).is_absolute() else Path(export_file)
         export_path.parent.mkdir(parents=True, exist_ok=True)
         export_path.write_text(json.dumps(backup, separators=(",", ":")), encoding="utf-8")
@@ -151,12 +161,49 @@ class VaultKnox:
         import_path = self.paths.base_dir / import_file if not Path(import_file).is_absolute() else Path(import_file)
         if self.paths.db_path.exists() and not force:
             raise VaultError("Vault already exists. Use force mode to replace it")
-        backup = json.loads(import_path.read_text(encoding="utf-8"))
-        backup_salt = bytes.fromhex(backup["salt"])
-        backup_key = derive_scoped_key(derive_master_key(password, backup_salt), b"vaultknox-backup")
-        nonce = bytes.fromhex(backup["nonce"])
-        ciphertext = bytes.fromhex(backup["ciphertext"])
-        decrypted_db = AESGCM(backup_key).decrypt(nonce, ciphertext, None)
+        try:
+            backup = json.loads(import_path.read_text(encoding="utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            raise VaultError("Backup file is not valid JSON") from exc
+
+        required_fields = {"version", "salt", "nonce", "ciphertext", "created_at", "metadata", "signature"}
+        if not required_fields.issubset(set(backup)):
+            raise VaultError("Backup file is missing required integrity fields")
+
+        if int(backup["version"]) < 2:
+            raise VaultError("Unsupported backup format version")
+
+        try:
+            backup_salt = bytes.fromhex(backup["salt"])
+            nonce = bytes.fromhex(backup["nonce"])
+            ciphertext = bytes.fromhex(backup["ciphertext"])
+        except ValueError as exc:
+            raise VaultError("Backup file contains invalid hex-encoded values") from exc
+
+        base_key = derive_master_key(password, backup_salt)
+        backup_key = derive_scoped_key(base_key, b"vaultknox-backup")
+        signing_key = derive_scoped_key(base_key, b"vaultknox-backup-signature")
+
+        backup_payload = {
+            "version": backup["version"],
+            "salt": backup["salt"],
+            "nonce": backup["nonce"],
+            "ciphertext": backup["ciphertext"],
+            "created_at": backup["created_at"],
+            "metadata": backup["metadata"],
+        }
+        expected_signature = self._backup_signature(signing_key, backup_payload)
+        if not hmac.compare_digest(expected_signature, backup["signature"]):
+            raise VaultError("Backup integrity check failed")
+
+        try:
+            decrypted_db = AESGCM(backup_key).decrypt(nonce, ciphertext, None)
+        except Exception as exc:  # noqa: BLE001
+            raise VaultError("Backup decryption failed") from exc
+
+        if not decrypted_db.startswith(b"SQLite format 3\x00"):
+            raise VaultError("Backup payload is not a valid SQLite database")
+
         self.paths.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.paths.db_path.write_bytes(decrypted_db)
         self.sessions.clear()
@@ -244,3 +291,7 @@ class VaultKnox:
         if failed_attempts >= max_attempts:
             locked_until = datetime.now(timezone.utc) + timedelta(minutes=lockout_minutes)
             self.db.set_config("locked_until", locked_until.isoformat())
+
+    def _backup_signature(self, signing_key: bytes, backup_payload: dict[str, Any]) -> str:
+        canonical = json.dumps(backup_payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        return hmac.new(signing_key, canonical, hashlib.sha256).hexdigest()
