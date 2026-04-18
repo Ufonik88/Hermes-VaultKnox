@@ -33,5 +33,5 @@ class VaultPaths:
 
 def expand_runtime_path(path: str | Path | None = None) -> VaultPaths:
     if path is None:
-        path = Path.home() / ".hermes" / "vault"
+        path = Path.home() / ".hermes" / "vaultknox"
     return VaultPaths(Path(path).expanduser().resolve())
