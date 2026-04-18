@@ -6,9 +6,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
 from vaultknox.audit import write_audit_event
 from vaultknox.config import DEFAULT_AUTO_LOCK_MINUTES, DEFAULT_LOCKOUT_MINUTES, DEFAULT_MAX_ATTEMPTS, DEFAULT_TOKEN_TTL_SECONDS, VaultPaths
-from vaultknox.core import EncryptedPayload, decrypt_payload, derive_master_key, derive_scoped_key, encrypt_payload, generate_salt, generate_token
+from vaultknox.core import NONCE_SIZE, EncryptedPayload, decrypt_payload, derive_master_key, derive_scoped_key, encrypt_payload, generate_salt, generate_token
 from vaultknox.db import VaultDatabase
 from vaultknox.session import SessionStore
 from vaultknox.types import build_metadata, masked_view, validate_secret
@@ -30,7 +32,7 @@ class VaultKnox:
     def __init__(self, paths: VaultPaths) -> None:
         self.paths = paths
         self.db = VaultDatabase(paths.db_path)
-        self.sessions = SessionStore(paths.session_path)
+        self.sessions = SessionStore(paths.session_path, paths.session_lock_path)
 
     def initialize(self, password: str, auto_lock_minutes: int = DEFAULT_AUTO_LOCK_MINUTES, max_attempts: int = DEFAULT_MAX_ATTEMPTS, lockout_minutes: int = DEFAULT_LOCKOUT_MINUTES) -> None:
         if self.paths.db_path.exists():
@@ -68,6 +70,7 @@ class VaultKnox:
         write_audit_event(self.paths.audit_log_path, "lock", "success")
 
     def list_secrets(self) -> list[dict[str, Any]]:
+        self._require_unlocked()
         return self.db.list_secrets()
 
     def add_secret(self, password: str, secret_id: str, secret_type: str, label: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -102,6 +105,7 @@ class VaultKnox:
         }
 
     def get_masked(self, secret_id: str, purpose: str | None = None, token_ttl_seconds: int = DEFAULT_TOKEN_TTL_SECONDS) -> dict[str, Any]:
+        self._require_unlocked()
         row = self.db.get_secret_row(secret_id)
         metadata = json.loads(row["metadata"])
         token = None
@@ -110,17 +114,78 @@ class VaultKnox:
         write_audit_event(self.paths.audit_log_path, "get_masked", "success", secret_id=secret_id, details={"token": bool(token)})
         return masked_view(row["id"], row["type"], row["label"], metadata, token=token)
 
-    def delete_secret(self, secret_id: str) -> None:
+    def delete_secret(self, password: str, secret_id: str) -> None:
+        self._verify_password(password)
         self.db.delete_secret(secret_id)
         write_audit_event(self.paths.audit_log_path, "delete", "success", secret_id=secret_id)
 
     def issue_token(self, secret_id: str, purpose: str, token_ttl_seconds: int = DEFAULT_TOKEN_TTL_SECONDS) -> str:
+        self._require_unlocked()
         self.db.get_secret_row(secret_id)
         token = generate_token()
         expires_at = (datetime.now(timezone.utc) + timedelta(seconds=token_ttl_seconds)).isoformat()
         self.db.store_token(token, secret_id, purpose, expires_at)
         write_audit_event(self.paths.audit_log_path, "issue_token", "success", secret_id=secret_id, details={"purpose": purpose})
         return token
+
+    def export_vault(self, password: str, export_file: str) -> dict[str, Any]:
+        self._verify_password(password)
+        backup_salt = generate_salt()
+        backup_key = derive_scoped_key(derive_master_key(password, backup_salt), b"vaultknox-backup")
+        nonce = generate_salt(NONCE_SIZE)
+        encrypted = AESGCM(backup_key).encrypt(nonce, self.paths.db_path.read_bytes(), None)
+        backup = {
+            "version": 1,
+            "salt": backup_salt.hex(),
+            "nonce": nonce.hex(),
+            "ciphertext": encrypted.hex(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        export_path = self.paths.base_dir / export_file if not Path(export_file).is_absolute() else Path(export_file)
+        export_path.parent.mkdir(parents=True, exist_ok=True)
+        export_path.write_text(json.dumps(backup, separators=(",", ":")), encoding="utf-8")
+        write_audit_event(self.paths.audit_log_path, "export", "success", details={"file": str(export_path)})
+        return {"exported_to": str(export_path)}
+
+    def import_vault(self, password: str, import_file: str, force: bool = False) -> dict[str, Any]:
+        import_path = self.paths.base_dir / import_file if not Path(import_file).is_absolute() else Path(import_file)
+        if self.paths.db_path.exists() and not force:
+            raise VaultError("Vault already exists. Use force mode to replace it")
+        backup = json.loads(import_path.read_text(encoding="utf-8"))
+        backup_salt = bytes.fromhex(backup["salt"])
+        backup_key = derive_scoped_key(derive_master_key(password, backup_salt), b"vaultknox-backup")
+        nonce = bytes.fromhex(backup["nonce"])
+        ciphertext = bytes.fromhex(backup["ciphertext"])
+        decrypted_db = AESGCM(backup_key).decrypt(nonce, ciphertext, None)
+        self.paths.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.paths.db_path.write_bytes(decrypted_db)
+        self.sessions.clear()
+        self._verify_password(password)
+        write_audit_event(self.paths.audit_log_path, "import", "success", details={"file": str(import_path)})
+        return {"imported_from": str(import_path)}
+
+    def change_password(self, current_password: str, new_password: str) -> None:
+        old_key = self._entry_key(current_password)
+        rows = self.db.list_secret_rows_raw()
+        decrypted_payloads: list[tuple[str, str, dict[str, Any]]] = []
+        for row in rows:
+            payload = decrypt_payload(old_key, EncryptedPayload(nonce=row["nonce"], ciphertext=row["data"], tag=row["tag"]))
+            decrypted_payloads.append((row["id"], row["type"], payload))
+
+        new_salt = generate_salt()
+        new_master_key = derive_master_key(new_password, new_salt)
+        new_entry_key = derive_scoped_key(new_master_key)
+        verifier = encrypt_payload(derive_scoped_key(new_master_key, b"vaultknox-verifier"), {"ok": True})
+
+        self.db.set_config("argon2_salt", new_salt.hex())
+        self.db.set_config("verifier", json.dumps({"nonce": verifier.nonce.hex(), "ciphertext": verifier.ciphertext.hex(), "tag": verifier.tag.hex()}, separators=(",", ":")))
+
+        for secret_id, secret_type, payload in decrypted_payloads:
+            reencrypted = encrypt_payload(new_entry_key, payload)
+            metadata = build_metadata(secret_type, payload)
+            self.db.update_secret_crypto(secret_id, reencrypted.ciphertext, reencrypted.nonce, reencrypted.tag, metadata)
+
+        write_audit_event(self.paths.audit_log_path, "change_password", "success")
 
     def consume_token(self, password: str, token: str) -> dict[str, Any]:
         row = self.db.get_token_row(token)
@@ -138,6 +203,10 @@ class VaultKnox:
         salt = bytes.fromhex(self.db.get_config("argon2_salt") or "")
         master_key = derive_master_key(password, salt)
         return derive_scoped_key(master_key)
+
+    def _require_unlocked(self) -> None:
+        if not self.sessions.is_unlocked():
+            raise VaultError("Vault is locked; run unlock first")
 
     def _verify_password(self, password: str) -> None:
         if not self.paths.db_path.exists():

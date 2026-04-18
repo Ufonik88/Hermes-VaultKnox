@@ -109,6 +109,19 @@ class VaultDatabase:
             if conn.total_changes == 0:
                 raise KeyError(f"Secret not found: {secret_id}")
 
+    def list_secret_rows_raw(self) -> list[sqlite3.Row]:
+        with self.connection() as conn:
+            return conn.execute("SELECT id, type, label, data, nonce, tag, metadata FROM secrets").fetchall()
+
+    def update_secret_crypto(self, secret_id: str, ciphertext: bytes, nonce: bytes, tag: bytes, metadata: dict[str, Any]) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                "UPDATE secrets SET data = ?, nonce = ?, tag = ?, metadata = ?, updated_at = ? WHERE id = ?",
+                (ciphertext, nonce, tag, json.dumps(metadata, separators=(",", ":")), utc_now(), secret_id),
+            )
+            if conn.total_changes == 0:
+                raise KeyError(f"Secret not found: {secret_id}")
+
     def store_token(self, token: str, secret_id: str, purpose: str, expires_at: str) -> None:
         with self.connection() as conn:
             conn.execute(

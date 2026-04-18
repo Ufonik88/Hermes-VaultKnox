@@ -86,6 +86,19 @@ def add(obj: dict[str, VaultKnox], secret_id: str, secret_type: str, label: str,
 
 @main.command()
 @click.argument("secret_id")
+@click.option("--type", "secret_type", required=True)
+@click.option("--label", required=True)
+@click.option("--data", required=True, help="Secret payload as JSON.")
+@click.pass_obj
+def update(obj: dict[str, VaultKnox], secret_id: str, secret_type: str, label: str, data: str) -> None:
+    vault = obj["vault"]
+    payload = json.loads(data)
+    result = vault.update_secret(_prompt_password(), secret_id, secret_type, label, payload)
+    click.echo(json.dumps(result, indent=2))
+
+
+@main.command()
+@click.argument("secret_id")
 @click.option("--mask", is_flag=True, default=False)
 @click.option("--purpose", default=None, help="Issue a one-time token for this purpose.")
 @click.pass_obj
@@ -100,7 +113,7 @@ def get(obj: dict[str, VaultKnox], secret_id: str, mask: bool, purpose: str | No
 @click.pass_obj
 def delete(obj: dict[str, VaultKnox], secret_id: str) -> None:
     vault = obj["vault"]
-    vault.delete_secret(secret_id)
+    vault.delete_secret(_prompt_password(), secret_id)
     click.echo("Secret deleted")
 
 
@@ -120,6 +133,35 @@ def consume_token(obj: dict[str, VaultKnox], token: str) -> None:
     vault = obj["vault"]
     result = vault.consume_token(_prompt_password(), token)
     click.echo(json.dumps(result, indent=2))
+
+
+@main.command()
+@click.option("--file", "file_path", required=True, help="Backup file location.")
+@click.pass_obj
+def export(obj: dict[str, VaultKnox], file_path: str) -> None:
+    vault = obj["vault"]
+    result = vault.export_vault(_prompt_password(), file_path)
+    click.echo(json.dumps(result, indent=2))
+
+
+@main.command("import")
+@click.option("--file", "file_path", required=True, help="Backup file location.")
+@click.option("--force", is_flag=True, default=False, help="Replace existing vault database.")
+@click.pass_obj
+def import_command(obj: dict[str, VaultKnox], file_path: str, force: bool) -> None:
+    vault = obj["vault"]
+    result = vault.import_vault(_prompt_password(), file_path, force=force)
+    click.echo(json.dumps(result, indent=2))
+
+
+@main.command("change-password")
+@click.pass_obj
+def change_password(obj: dict[str, VaultKnox]) -> None:
+    vault = obj["vault"]
+    current = click.prompt("Current master password", hide_input=True)
+    new_password = click.prompt("New master password", hide_input=True, confirmation_prompt=True)
+    vault.change_password(current, new_password)
+    click.echo("Master password changed")
 
 
 if __name__ == "__main__":

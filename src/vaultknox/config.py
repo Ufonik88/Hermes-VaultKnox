@@ -26,6 +26,10 @@ class VaultPaths:
     def session_path(self) -> Path:
         return self.base_dir / "session.json"
 
+    @property
+    def session_lock_path(self) -> Path:
+        return self.base_dir / "session.lock"
+
 
 def expand_runtime_path(path: str | Path | None = None) -> VaultPaths:
     if path is None:

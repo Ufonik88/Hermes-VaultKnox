@@ -2,12 +2,10 @@
 
 ## Active Tasks
 
-- [ ] Finalize v1 session architecture so unlock semantics are secure across separate CLI and Hermes invocations.
-- [ ] Add concurrent access controls with file locking and stale-session recovery.
-- [ ] Implement Hermes-safe tool wrapper with capability-gated write operations.
-- [ ] Add CLI commands for update, export, import, and change-password.
 - [ ] Harden audit logging with file permissions and rotation.
 - [ ] Expand tests for lockout windows, expiry handling, corrupted database cases, and plaintext leak prevention.
+- [ ] Add import integrity checks and optional signed backup metadata.
+- [ ] Document operational guidance for Hermes write-gate policy and default-safe deployment.
 
 ## Decisions And Ideas
 
@@ -27,3 +25,7 @@
 - [x] 2026-04-18 Added an initial VaultKnox service layer with initialization, password verification, add/update/delete, masked retrieval, token issue/consume, and basic audit logging.
 - [x] 2026-04-18 Added a baseline CLI with init, status, unlock, lock, list, add, get, delete, issue-token, and consume-token commands.
 - [x] 2026-04-18 Added baseline tests covering crypto round-trips, validation, masking, failed password tracking, and single-use tokens.
+- [x] 2026-04-18 Added session lock coordination with stale PID cleanup and enforced unlocked-session checks for metadata/token operations.
+- [x] 2026-04-18 Added CLI commands for update, export, import, and change-password.
+- [x] 2026-04-18 Added backup export/import encryption and password rotation support in the vault service.
+- [x] 2026-04-18 Added Hermes-safe wrapper with capability-gated write actions and tests for default-deny behavior.
