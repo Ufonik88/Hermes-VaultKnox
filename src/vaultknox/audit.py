@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-
 AUDIT_MAX_BYTES = 1_048_576
 AUDIT_MAX_BACKUPS = 5
 

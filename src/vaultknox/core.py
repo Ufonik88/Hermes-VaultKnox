@@ -6,10 +6,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from argon2.low_level import Type, hash_secret_raw
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.primitives import hashes
-
 
 NONCE_SIZE = 12
 KEY_SIZE = 32

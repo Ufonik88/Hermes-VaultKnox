@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
-
 
 DEFAULT_AUTO_LOCK_MINUTES = 15
 DEFAULT_TOKEN_TTL_SECONDS = 300
 DEFAULT_LOCKOUT_MINUTES = 30
 DEFAULT_MAX_ATTEMPTS = 5
+PRIVATE_FILE_MODE = 0o600
 
 
 @dataclass(slots=True)
@@ -35,3 +36,8 @@ def expand_runtime_path(path: str | Path | None = None) -> VaultPaths:
     if path is None:
         path = Path.home() / ".hermes" / "vaultknox"
     return VaultPaths(Path(path).expanduser().resolve())
+
+
+def set_private_file_permissions(path: Path) -> None:
+    if path.exists():
+        os.chmod(path, PRIVATE_FILE_MODE)

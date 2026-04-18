@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -191,9 +192,32 @@ def test_audit_log_does_not_contain_plaintext_secret(vault: VaultKnox) -> None:
     assert '"cvv":"123"' not in audit_text
 
 
-def test_stale_session_is_cleared(vault: VaultKnox) -> None:
+def test_expired_session_is_cleared(vault: VaultKnox) -> None:
     vault.initialize("correct horse battery staple")
     store = SessionStore(vault.paths.session_path, vault.paths.session_lock_path)
-    store.write(auto_lock_minutes=5, owner_pid=-1)
+    store.session_path.parent.mkdir(parents=True, exist_ok=True)
+    expired_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    unlocked_at = expired_at - timedelta(minutes=5)
+    store.session_path.write_text(
+        (
+            '{'
+            f'"unlocked_at":"{unlocked_at.isoformat()}",' 
+            f'"expires_at":"{expired_at.isoformat()}",' 
+            f'"refreshed_at":"{expired_at.isoformat()}"'
+            '}'
+        ),
+        encoding="utf-8",
+    )
 
     assert vault.status().unlocked is False
+    assert store.session_path.exists() is False
+
+
+def test_corrupted_session_is_cleared(vault: VaultKnox) -> None:
+    vault.initialize("correct horse battery staple")
+    store = SessionStore(vault.paths.session_path, vault.paths.session_lock_path)
+    store.session_path.parent.mkdir(parents=True, exist_ok=True)
+    store.session_path.write_text("not-json", encoding="utf-8")
+
+    assert vault.status().unlocked is False
+    assert store.session_path.exists() is False

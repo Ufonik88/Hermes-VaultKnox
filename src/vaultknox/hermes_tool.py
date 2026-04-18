@@ -5,7 +5,6 @@ from typing import Any
 from vaultknox.config import expand_runtime_path
 from vaultknox.vault import VaultError, VaultKnox
 
-
 READ_ACTIONS = {"status", "list", "get_masked", "get_token", "unlock", "lock"}
 WRITE_ACTIONS = {"add", "update", "delete"}
 

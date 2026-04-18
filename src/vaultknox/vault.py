@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
-import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -11,7 +11,7 @@ from typing import Any
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from vaultknox.audit import write_audit_event
-from vaultknox.config import DEFAULT_AUTO_LOCK_MINUTES, DEFAULT_LOCKOUT_MINUTES, DEFAULT_MAX_ATTEMPTS, DEFAULT_TOKEN_TTL_SECONDS, VaultPaths
+from vaultknox.config import DEFAULT_AUTO_LOCK_MINUTES, DEFAULT_LOCKOUT_MINUTES, DEFAULT_MAX_ATTEMPTS, DEFAULT_TOKEN_TTL_SECONDS, VaultPaths, set_private_file_permissions
 from vaultknox.core import NONCE_SIZE, EncryptedPayload, decrypt_payload, derive_master_key, derive_scoped_key, encrypt_payload, generate_salt, generate_token
 from vaultknox.db import VaultDatabase
 from vaultknox.session import SessionStore
@@ -154,6 +154,7 @@ class VaultKnox:
         export_path = self.paths.base_dir / export_file if not Path(export_file).is_absolute() else Path(export_file)
         export_path.parent.mkdir(parents=True, exist_ok=True)
         export_path.write_text(json.dumps(backup, separators=(",", ":")), encoding="utf-8")
+        set_private_file_permissions(export_path)
         write_audit_event(self.paths.audit_log_path, "export", "success", details={"file": str(export_path)})
         return {"exported_to": str(export_path)}
 
@@ -206,6 +207,7 @@ class VaultKnox:
 
         self.paths.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.paths.db_path.write_bytes(decrypted_db)
+        set_private_file_permissions(self.paths.db_path)
         self.sessions.clear()
         self._verify_password(password)
         write_audit_event(self.paths.audit_log_path, "import", "success", details={"file": str(import_path)})

@@ -2,8 +2,8 @@
 
 ## Active Tasks
 
-- [ ] Draft release checklist for v0.1.0 packaging and install flow validation.
-- [ ] Add CI workflow for lint and test execution on pull requests.
+- [ ] Add an initial setup step that requires setting a Master Password, with a warning that it is never stored and should be strong.
+- [ ] Verify GitHub Actions passes on the first remote run after publication.
 
 ## Decisions And Ideas
 
@@ -31,3 +31,10 @@
 - [x] 2026-04-18 Completed #1 by hardening audit logging with owner-only file permissions and automatic log rotation.
 - [x] 2026-04-18 Completed #2 by adding lockout, expiry, corruption, and plaintext-leak prevention tests.
 - [x] 2026-04-18 Completed #3 by adding backup integrity signing, metadata signing coverage, and strict import integrity checks.
+- [x] 2026-04-18 Added public README, Apache 2.0 license, NOTICE file, and author metadata naming Ufonik as the project author.
+- [x] 2026-04-18 Added a release checklist document for v0.1.0 packaging and install flow validation.
+- [x] 2026-04-18 Added GitHub Actions CI for Ruff and pytest on pushes and pull requests.
+- [x] 2026-04-18 Fixed session persistence for installed CLI workflows by removing PID-bound session invalidation.
+- [x] 2026-04-18 Validated local release gates: editable install, Ruff, pytest, and installed CLI smoke test.
+- [x] 2026-04-18 Hardened filesystem permissions for database, session files, lock files, and exported backups.
+- [x] 2026-04-18 Completed the local release checklist review: runtime ignore rules, CLI doc examples, repo hygiene scan, and version/changelog validation.
