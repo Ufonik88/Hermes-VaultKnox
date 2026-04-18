@@ -1,0 +1,33 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+
+DEFAULT_AUTO_LOCK_MINUTES = 15
+DEFAULT_TOKEN_TTL_SECONDS = 300
+DEFAULT_LOCKOUT_MINUTES = 30
+DEFAULT_MAX_ATTEMPTS = 5
+
+
+@dataclass(slots=True)
+class VaultPaths:
+    base_dir: Path
+
+    @property
+    def db_path(self) -> Path:
+        return self.base_dir / "secrets.db"
+
+    @property
+    def audit_log_path(self) -> Path:
+        return self.base_dir / "audit.log"
+
+    @property
+    def session_path(self) -> Path:
+        return self.base_dir / "session.json"
+
+
+def expand_runtime_path(path: str | Path | None = None) -> VaultPaths:
+    if path is None:
+        path = Path.home() / ".hermes" / "vault"
+    return VaultPaths(Path(path).expanduser().resolve())

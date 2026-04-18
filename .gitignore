@@ -1,0 +1,19 @@
+.pytest_cache/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+dist/
+build/
+*.egg-info/
+.coverage
+htmlcov/
+
+# Runtime vault artifacts
+.runtime/
+*.db
+*.db-shm
+*.db-wal
+*.vault
+*.log
