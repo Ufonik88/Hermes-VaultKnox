@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from vaultknox.config import set_private_file_permissions
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS secrets (
@@ -51,20 +51,18 @@ class VaultDatabase:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self.connection() as conn:
             conn.executescript(SCHEMA)
-        set_private_file_permissions(self.db_path)
+        os.chmod(self.db_path, 0o600)
 
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        set_private_file_permissions(self.db_path)
         try:
             conn.execute("PRAGMA foreign_keys = ON")
             yield conn
             conn.commit()
         finally:
             conn.close()
-            set_private_file_permissions(self.db_path)
 
     def get_config(self, key: str) -> str | None:
         with self.connection() as conn:
