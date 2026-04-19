@@ -2,7 +2,7 @@
 
 ## Active Tasks
 
-- [ ] Add an initial setup step that requires setting a Master Password, with a warning that it is never stored and should be strong.
+- [ ] Add an initial setup step that requires setting a Master Password for VaultKnox, with a warning that it is never stored and should be strong.
 - [ ] Verify GitHub Actions passes on the first remote run after publication.
 
 ## Decisions And Ideas
