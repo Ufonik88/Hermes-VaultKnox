@@ -49,6 +49,9 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+vaultknox = ["assets/*.svg"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

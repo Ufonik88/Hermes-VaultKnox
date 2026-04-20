@@ -16,6 +16,7 @@
 
 ## Completed Tasks And Change Log
 
+- [x] 2026-04-19 Added packaged VaultKnox branding asset, CLI logo display command, and README logo embedding.
 - [x] 2026-04-18 Bootstrapped the Python package with setuptools, console entrypoint, test config, and runtime artifact ignores.
 - [x] 2026-04-18 Added initial crypto primitives using Argon2id, HKDF, AES-256-GCM, secure salts, and token generation.
 - [x] 2026-04-18 Added secret validation and masked metadata generation for card, credential, api_key, and note records.

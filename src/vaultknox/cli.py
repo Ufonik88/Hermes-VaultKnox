@@ -5,6 +5,7 @@ from pathlib import Path
 
 import click
 
+from vaultknox.branding import get_logo_asset_path, get_logo_banner
 from vaultknox.config import expand_runtime_path
 from vaultknox.vault import VaultError, VaultKnox
 
@@ -19,10 +20,21 @@ def _prompt_password(confirm: bool = False) -> str:
 
 @click.group()
 @click.option("--runtime-dir", type=click.Path(path_type=Path), default=None, help="Override the runtime vault directory.")
+@click.option("--logo", "show_logo", is_flag=True, default=False, help="Display the VaultKnox ASCII logo before command output.")
 @click.pass_context
-def main(ctx: click.Context, runtime_dir: Path | None) -> None:
+def main(ctx: click.Context, runtime_dir: Path | None, show_logo: bool) -> None:
     ctx.ensure_object(dict)
     ctx.obj["vault"] = _vault(str(runtime_dir) if runtime_dir else None)
+    if show_logo:
+        click.echo(get_logo_banner())
+
+
+@main.command()
+@click.option("--asset-path", is_flag=True, default=False, help="Also print the packaged SVG asset path.")
+def logo(asset_path: bool) -> None:
+    click.echo(get_logo_banner())
+    if asset_path:
+        click.echo(f"SVG logo: {get_logo_asset_path()}")
 
 
 @main.command()

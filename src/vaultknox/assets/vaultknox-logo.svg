@@ -1,0 +1,45 @@
+<svg width="1400" height="800" viewBox="0 0 1400 800" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#071428"/>
+      <stop offset="100%" stop-color="#0A1F3D"/>
+    </linearGradient>
+    <linearGradient id="aqua" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#27D9FF"/>
+      <stop offset="100%" stop-color="#2D7DFF"/>
+    </linearGradient>
+    <linearGradient id="steel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#F7FAFF"/>
+      <stop offset="100%" stop-color="#90A6BD"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="10" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1400" height="800" fill="url(#bg)"/>
+
+  <text x="700" y="115" text-anchor="middle" fill="#FFFFFF" font-size="74" font-family="Segoe UI, Arial, sans-serif" font-weight="700" letter-spacing="2">VAULTKNOX</text>
+  <text x="700" y="165" text-anchor="middle" fill="#D5E2EF" font-size="48" font-family="Segoe UI, Arial, sans-serif" font-weight="500" letter-spacing="1">Secure Secret Add-On</text>
+
+  <ellipse cx="700" cy="605" rx="185" ry="24" fill="#020B17" opacity="0.65"/>
+
+  <path d="M700 230 C615 230 545 300 545 385 C545 470 605 548 700 594 C795 548 855 470 855 385 C855 300 785 230 700 230Z" fill="#0A203D" stroke="url(#aqua)" stroke-width="10" filter="url(#glow)"/>
+  <path d="M700 275 C650 275 607 317 607 368 C607 438 652 489 700 520 C748 489 793 438 793 368 C793 317 750 275 700 275Z" fill="#0F2D52" stroke="url(#steel)" stroke-width="8"/>
+
+  <path d="M700 300 C674 300 653 321 653 347 C653 370 670 389 700 407 C730 389 747 370 747 347 C747 321 726 300 700 300Z" fill="url(#aqua)" opacity="0.86"/>
+  <path d="M700 320 C686 320 675 331 675 345 C675 359 686 370 700 380 C714 370 725 359 725 345 C725 331 714 320 700 320Z" fill="#F7FAFF" opacity="0.96"/>
+
+  <rect x="620" y="404" width="160" height="88" rx="18" fill="#F7FAFF" stroke="#1A355B" stroke-width="6"/>
+  <rect x="690" y="422" width="20" height="36" rx="10" fill="#0B2242"/>
+  <circle cx="700" cy="460" r="11" fill="#0B2242"/>
+
+  <path d="M575 355 C500 320 445 326 390 370 C450 375 500 392 555 442" stroke="url(#steel)" stroke-width="24" stroke-linecap="round"/>
+  <path d="M555 442 C500 398 456 387 408 389" stroke="url(#aqua)" stroke-width="14" stroke-linecap="round"/>
+  <path d="M825 355 C900 320 955 326 1010 370 C950 375 900 392 845 442" stroke="url(#steel)" stroke-width="24" stroke-linecap="round"/>
+  <path d="M845 442 C900 398 944 387 992 389" stroke="url(#aqua)" stroke-width="14" stroke-linecap="round"/>
+</svg>
