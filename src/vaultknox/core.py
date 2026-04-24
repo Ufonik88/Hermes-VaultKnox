@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import json
 import secrets
 from dataclasses import dataclass
@@ -75,5 +76,10 @@ def decrypt_payload(key: bytes, payload: EncryptedPayload) -> dict[str, Any]:
 
 
 def zeroize(buffer: bytearray) -> None:
-    for index in range(len(buffer)):
-        buffer[index] = 0
+    """Overwrite the underlying C memory buffer to reduce residual plaintext exposure.
+
+    Note: Python str objects created by json.loads() hold their own heap copies and
+    cannot be zeroed from Python. This clears the bytearray buffer's C allocation only.
+    """
+    if buffer:
+        ctypes.memset((ctypes.c_char * len(buffer)).from_buffer(buffer), 0, len(buffer))

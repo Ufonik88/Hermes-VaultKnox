@@ -5,8 +5,8 @@ from typing import Any
 from vaultknox.config import expand_runtime_path
 from vaultknox.vault import VaultError, VaultKnox
 
-READ_ACTIONS = {"status", "list", "get_masked", "get_token", "unlock", "lock"}
-WRITE_ACTIONS = {"add", "update", "delete"}
+READ_ACTIONS = {"status", "list", "get_masked", "get_token", "unlock", "lock", "inject_env", "consume_token"}
+WRITE_ACTIONS = {"add", "update", "delete", "revoke_token"}
 
 
 def vault_tool(action: str, allow_write: bool = False, runtime_dir: str | None = None, **kwargs: Any) -> dict[str, Any]:
@@ -62,6 +62,12 @@ def vault_tool(action: str, allow_write: bool = False, runtime_dir: str | None =
     if action == "delete":
         vault.delete_secret(kwargs["master_password"], kwargs["secret_id"])
         return {"deleted": kwargs["secret_id"]}
+    if action == "inject_env":
+        return vault.inject_to_env(kwargs["master_password"], kwargs["secret_id"], kwargs["env_var"])
+    if action == "consume_token":
+        return vault.consume_token(kwargs["master_password"], kwargs["token"])
+    if action == "revoke_token":
+        return vault.revoke_token(kwargs["master_password"], kwargs["token"], kwargs.get("reason"))
 
     allowed = ", ".join(sorted(READ_ACTIONS | WRITE_ACTIONS))
     raise VaultError(f"Unsupported action '{action}'. Allowed actions: {allowed}")

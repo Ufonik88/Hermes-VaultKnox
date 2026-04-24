@@ -221,3 +221,75 @@ def test_corrupted_session_is_cleared(vault: VaultKnox) -> None:
 
     assert vault.status().unlocked is False
     assert store.session_path.exists() is False
+
+
+def test_inject_to_env_sets_environment_variable(vault: VaultKnox, monkeypatch: pytest.MonkeyPatch) -> None:
+    vault.initialize("correct horse battery staple")
+    vault.unlock("correct horse battery staple")
+    vault.add_secret(
+        "correct horse battery staple",
+        "api_openai",
+        "api_key",
+        "OpenAI Key",
+        {"key": "sk-test-abc123", "service": "OpenAI"},
+    )
+
+    result = vault.inject_to_env("correct horse battery staple", "api_openai", "TEST_OPENAI_KEY")
+
+    assert result["injected"] == "TEST_OPENAI_KEY"
+    assert result["secret_id"] == "api_openai"
+    import os
+    assert os.environ.get("TEST_OPENAI_KEY") == "sk-test-abc123"
+    monkeypatch.delenv("TEST_OPENAI_KEY", raising=False)
+
+
+def test_inject_to_env_credential_injects_password(vault: VaultKnox, monkeypatch: pytest.MonkeyPatch) -> None:
+    vault.initialize("correct horse battery staple")
+    vault.unlock("correct horse battery staple")
+    vault.add_secret(
+        "correct horse battery staple",
+        "db_cred",
+        "credential",
+        "DB Password",
+        {"username": "admin", "password": "s3cr3t!"},
+    )
+
+    vault.inject_to_env("correct horse battery staple", "db_cred", "TEST_DB_PASSWORD")
+
+    import os
+    assert os.environ.get("TEST_DB_PASSWORD") == "s3cr3t!"
+    monkeypatch.delenv("TEST_DB_PASSWORD", raising=False)
+
+
+def test_revoke_token_prevents_consume(vault: VaultKnox) -> None:
+    vault.initialize("correct horse battery staple")
+    vault.unlock("correct horse battery staple")
+    vault.add_secret(
+        "correct horse battery staple",
+        "api_openai",
+        "api_key",
+        "OpenAI",
+        {"key": "sk-test", "service": "OpenAI"},
+    )
+    token = vault.issue_token("api_openai", "integration")
+
+    vault.revoke_token("correct horse battery staple", token, reason="test revocation")
+
+    with pytest.raises(VaultError, match="revoked"):
+        vault.consume_token("correct horse battery staple", token)
+
+
+def test_revoke_token_requires_valid_password(vault: VaultKnox) -> None:
+    vault.initialize("correct horse battery staple")
+    vault.unlock("correct horse battery staple")
+    vault.add_secret(
+        "correct horse battery staple",
+        "api_openai",
+        "api_key",
+        "OpenAI",
+        {"key": "sk-test", "service": "OpenAI"},
+    )
+    token = vault.issue_token("api_openai", "integration")
+
+    with pytest.raises(VaultError):
+        vault.revoke_token("wrong password", token)

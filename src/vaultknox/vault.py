@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import atexit
 import hashlib
 import hmac
 import json
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -16,6 +18,16 @@ from vaultknox.core import NONCE_SIZE, EncryptedPayload, decrypt_payload, derive
 from vaultknox.db import VaultDatabase
 from vaultknox.session import SessionStore
 from vaultknox.types import build_metadata, masked_view, validate_secret
+
+# Primary value field per secret type used by inject_to_env
+_ENV_FIELD_BY_TYPE: dict[str, str] = {
+    "api_key": "key",
+    "credential": "password",
+    "note": "content",
+    "card": "number",
+    "password": "value",
+    "connection_string": "value",
+}
 
 
 class VaultError(RuntimeError):
@@ -237,6 +249,8 @@ class VaultKnox:
         write_audit_event(self.paths.audit_log_path, "change_password", "success")
 
     def consume_token(self, password: str, token: str) -> dict[str, Any]:
+        if self.db.is_token_revoked(token):
+            raise VaultError("Token has been revoked")
         row = self.db.get_token_row(token)
         if row["used_at"] is not None:
             raise VaultError("Token already used")
@@ -246,6 +260,22 @@ class VaultKnox:
         self.db.mark_token_used(token)
         write_audit_event(self.paths.audit_log_path, "consume_token", "success", secret_id=row["secret_id"])
         return secret
+
+    def inject_to_env(self, password: str, secret_id: str, env_var: str) -> dict[str, Any]:
+        secret = self.get_secret(password, secret_id)
+        field = _ENV_FIELD_BY_TYPE.get(secret["type"])
+        if field is None or field not in secret["payload"]:
+            raise VaultError(f"Cannot determine primary value field for secret type '{secret['type']}'")
+        os.environ[env_var] = secret["payload"][field]
+        atexit.register(os.environ.pop, env_var, None)
+        write_audit_event(self.paths.audit_log_path, "inject_env", "success", secret_id=secret_id, details={"env_var": env_var})
+        return {"injected": env_var, "secret_id": secret_id}
+
+    def revoke_token(self, password: str, token: str, reason: str | None = None) -> dict[str, Any]:
+        self._verify_password(password)
+        self.db.revoke_token(token, reason)
+        write_audit_event(self.paths.audit_log_path, "revoke_token", "success", details={"token_prefix": token[:8]})
+        return {"revoked": True}
 
     def _entry_key(self, password: str) -> bytes:
         self._verify_password(password)

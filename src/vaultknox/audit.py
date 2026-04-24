@@ -41,6 +41,8 @@ def _rotate_audit_log_if_needed(audit_log_path: Path) -> None:
         src = audit_log_path.with_name(f"{audit_log_path.name}.{index}")
         dst = audit_log_path.with_name(f"{audit_log_path.name}.{index + 1}")
         if src.exists():
-            src.rename(dst)
+            os.replace(src, dst)
 
-    audit_log_path.rename(audit_log_path.with_name(f"{audit_log_path.name}.1"))
+    os.replace(audit_log_path, audit_log_path.with_name(f"{audit_log_path.name}.1"))
+    audit_log_path.touch()
+    os.chmod(audit_log_path, 0o600)

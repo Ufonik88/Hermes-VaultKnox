@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS secrets (
     id TEXT PRIMARY KEY,
@@ -36,6 +35,20 @@ CREATE TABLE IF NOT EXISTS vault_tokens (
     used_at TEXT,
     FOREIGN KEY(secret_id) REFERENCES secrets(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS vault_tokens_revoked (
+    token TEXT PRIMARY KEY,
+    revoked_at TEXT NOT NULL,
+    reason TEXT
+);
+"""
+
+MIGRATIONS = """
+CREATE TABLE IF NOT EXISTS vault_tokens_revoked (
+    token TEXT PRIMARY KEY,
+    revoked_at TEXT NOT NULL,
+    reason TEXT
+);
 """
 
 
@@ -46,11 +59,15 @@ def utc_now() -> str:
 class VaultDatabase:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
+        self._schema_current = False
 
     def initialize(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self.connection() as conn:
             conn.executescript(SCHEMA)
+            rows = conn.execute("PRAGMA integrity_check").fetchall()
+            if len(rows) != 1 or rows[0][0] != "ok":
+                raise RuntimeError(f"SQLite integrity check failed after initialization: {[r[0] for r in rows]}")
         os.chmod(self.db_path, 0o600)
 
     @contextmanager
@@ -58,7 +75,13 @@ class VaultDatabase:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         try:
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA synchronous = NORMAL")
             conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA secure_delete = ON")
+            if not self._schema_current:
+                conn.executescript(MIGRATIONS)
+                self._schema_current = True
             yield conn
             conn.commit()
         finally:
@@ -148,3 +171,15 @@ class VaultDatabase:
         with self.connection() as conn:
             row = conn.execute("SELECT COUNT(*) AS count FROM secrets").fetchone()
             return int(row["count"])
+
+    def revoke_token(self, token: str, reason: str | None = None) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO vault_tokens_revoked(token, revoked_at, reason) VALUES(?, ?, ?)",
+                (token, utc_now(), reason),
+            )
+
+    def is_token_revoked(self, token: str) -> bool:
+        with self.connection() as conn:
+            row = conn.execute("SELECT token FROM vault_tokens_revoked WHERE token = ?", (token,)).fetchone()
+            return row is not None
