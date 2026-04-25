@@ -51,6 +51,10 @@ def _prompt_secret_payload(secret_type: str) -> dict[str, Any]:
         return payload
     if secret_type == "note":
         return {"content": click.prompt("Note content")}
+    if secret_type == "connection_string":
+        return {"value": click.prompt("Connection string", hide_input=True)}
+    if secret_type == "password":
+        return {"value": click.prompt("Password value", hide_input=True)}
     raise click.UsageError(f"Interactive prompts are not supported for type '{secret_type}'. Use --data with a JSON payload.")
 
 
@@ -113,10 +117,16 @@ def lock(obj: dict[str, VaultKnox]) -> None:
 
 
 @main.command("list")
+@click.option("--expired", is_flag=True, default=False, help="Show only expired secrets.")
 @click.pass_obj
-def list_command(obj: dict[str, VaultKnox]) -> None:
+def list_command(obj: dict[str, VaultKnox], expired: bool) -> None:
     vault = obj["vault"]
-    click.echo(json.dumps(vault.list_secrets(), indent=2))
+    from datetime import datetime, timezone
+    secrets = vault.list_secrets()
+    if expired:
+        now = datetime.now(timezone.utc)
+        secrets = [s for s in secrets if s.get("expires_at") and datetime.fromisoformat(s["expires_at"]) <= now]
+    click.echo(json.dumps(secrets, indent=2))
 
 
 @main.command()
@@ -124,11 +134,12 @@ def list_command(obj: dict[str, VaultKnox]) -> None:
 @click.option("--type", "secret_type", required=True)
 @click.option("--label", required=True)
 @click.option("--data", default=None, help="Secret payload as JSON. Omit to use interactive field prompts.")
+@click.option("--expires-at", default=None, help="Expiry datetime in ISO 8601 format (e.g. 2025-12-31T00:00:00+00:00).")
 @click.pass_obj
-def add(obj: dict[str, VaultKnox], secret_id: str, secret_type: str, label: str, data: str | None) -> None:
+def add(obj: dict[str, VaultKnox], secret_id: str, secret_type: str, label: str, data: str | None, expires_at: str | None) -> None:
     vault = obj["vault"]
     payload = json.loads(data) if data is not None else _prompt_secret_payload(secret_type)
-    result = vault.add_secret(_prompt_password(), secret_id, secret_type, label, payload)
+    result = vault.add_secret(_prompt_password(), secret_id, secret_type, label, payload, expires_at=expires_at)
     click.echo(json.dumps(result, indent=2))
 
 
@@ -137,11 +148,12 @@ def add(obj: dict[str, VaultKnox], secret_id: str, secret_type: str, label: str,
 @click.option("--type", "secret_type", required=True)
 @click.option("--label", required=True)
 @click.option("--data", default=None, help="Secret payload as JSON. Omit to use interactive field prompts.")
+@click.option("--expires-at", default=None, help="Expiry datetime in ISO 8601 format (e.g. 2025-12-31T00:00:00+00:00).")
 @click.pass_obj
-def update(obj: dict[str, VaultKnox], secret_id: str, secret_type: str, label: str, data: str | None) -> None:
+def update(obj: dict[str, VaultKnox], secret_id: str, secret_type: str, label: str, data: str | None, expires_at: str | None) -> None:
     vault = obj["vault"]
     payload = json.loads(data) if data is not None else _prompt_secret_payload(secret_type)
-    result = vault.update_secret(_prompt_password(), secret_id, secret_type, label, payload)
+    result = vault.update_secret(_prompt_password(), secret_id, secret_type, label, payload, expires_at=expires_at)
     click.echo(json.dumps(result, indent=2))
 
 
@@ -229,6 +241,47 @@ def inject_env(obj: dict[str, VaultKnox], secret_id: str, env_var: str) -> None:
 def revoke_token_cmd(obj: dict[str, VaultKnox], token: str, reason: str | None) -> None:
     vault = obj["vault"]
     result = vault.revoke_token(_prompt_password(), token, reason)
+    click.echo(json.dumps(result, indent=2))
+
+
+@main.command("vacuum")
+@click.pass_obj
+def vacuum(obj: dict[str, VaultKnox]) -> None:
+    """Reclaim unused space and checkpoint the WAL file."""
+    import os
+    vault = obj["vault"]
+    db_path = vault.paths.db_path
+    before = os.path.getsize(db_path) if db_path.exists() else 0
+    vault.db.vacuum()
+    after = os.path.getsize(db_path) if db_path.exists() else 0
+    click.echo(json.dumps({"before_bytes": before, "after_bytes": after, "saved_bytes": before - after}, indent=2))
+
+
+@main.command("bulk-import")
+@click.option("--file", "file_path", required=True, type=click.Path(exists=True, path_type=Path), help="YAML or JSON file containing secrets to import.")
+@click.option("--format", "file_format", type=click.Choice(["yaml", "json"], case_sensitive=False), default=None, help="File format. Defaults to auto-detect from extension.")
+@click.pass_obj
+def bulk_import(obj: dict[str, VaultKnox], file_path: Path, file_format: str | None) -> None:
+    """Import multiple secrets from a YAML or JSON file.
+
+    File format: {"secrets": [{"id": "...", "type": "...", "label": "...", "data": {...}}]}
+    """
+    vault = obj["vault"]
+    fmt = file_format or ("yaml" if file_path.suffix.lower() in {".yml", ".yaml"} else "json")
+    try:
+        if fmt == "yaml":
+            import yaml  # type: ignore[import-untyped]
+            raw = yaml.safe_load(file_path.read_text(encoding="utf-8"))
+        else:
+            raw = json.loads(file_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise click.ClickException(f"Failed to parse import file: {exc}") from exc
+    if not isinstance(raw, dict) or "secrets" not in raw:
+        raise click.ClickException("Import file must contain a top-level 'secrets' list")
+    entries = raw["secrets"]
+    if not isinstance(entries, list):
+        raise click.ClickException("'secrets' must be a list")
+    result = vault.bulk_import_secrets(_prompt_password(), entries)
     click.echo(json.dumps(result, indent=2))
 
 

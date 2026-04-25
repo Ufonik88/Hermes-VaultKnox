@@ -2,13 +2,6 @@
 
 ## Active Tasks
 
-### Phase 3 — Feature Completeness (v0.3.0 minor — next up after review)
-- [ ] P1-16: Add secret expiry/TTL (expires_at column, DB migration, get_masked warns on expired secrets, CLI --expires-at and list --expired).
-- [ ] P2-11: Add bulk-import CLI command for YAML/JSON files (add pyyaml dependency, fail-fast validation, single transaction).
-- [ ] P2-12: Add connection_string secret type with urllib.parse URI validation; metadata stores scheme/host/port/has_credentials only.
-- [ ] P2-19: Add password secret type (simple {value: str} payload, empty metadata, no hints).
-- [ ] P2-9: Add vacuum CLI command and db.vacuum() method (VACUUM + wal_checkpoint TRUNCATE).
-
 ### Phase 4 — Polish & Hardening (v0.4.0 — deferred pending review)
 - [ ] P2-7: Reintroduce PID binding in session.py with --skip-pid-check escape hatch for daemon workflows (previously reverted).
 - [ ] P2-8: Add validate_password_strength() (min 12 chars, 3+ char classes, 40+ bit entropy); integrate into initialize() and change_password(); add --no-password-check CLI flag.
@@ -69,3 +62,9 @@
 - [x] 2026-04-24 Phase 2: Made --data optional on CLI add/update with interactive per-type prompts; hide_input=True for sensitive fields (P1-10).
 - [x] 2026-04-24 Phase 2: Exposed consume_token action in hermes_tool.py (P1-21).
 - [x] 2026-04-24 Phase 2: Added hypothesis property-based tests for encrypt/decrypt round-trip, ciphertext tamper, tag tamper, and zeroize; added hypothesis to dev deps (P1-23).
+- [x] 2026-04-24 Phase 3: Added secret expiry/TTL — expires_at column in SCHEMA + ALTER TABLE migration, get_secret/get_masked return {expired:true} for expired secrets, add/update accept --expires-at, CLI list --expired filter (P1-16).
+- [x] 2026-04-24 Phase 3: Added connection_string secret type with urllib.parse validation (scheme allowlist, host required unless sqlite), metadata stores scheme/host/port/has_credentials — never the password (P2-12).
+- [x] 2026-04-24 Phase 3: Added password secret type with {value: str} payload and empty metadata; both types get interactive CLI prompts (P2-19).
+- [x] 2026-04-24 Phase 3: Added vacuum CLI command and db.vacuum() method (VACUUM + WAL checkpoint TRUNCATE, reports before/after size) (P2-9).
+- [x] 2026-04-24 Phase 3: Added bulk-import CLI command for YAML/JSON files with fail-fast validation before any writes; pyyaml added as runtime dep (P2-11).
+- [x] 2026-04-24 Phase 3: Added 13 new tests covering new secret types, expiry, bulk import, and vacuum; ruff B017 fixed in test_core.py with specific InvalidTag exception type. 48/48 tests pass.

@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS secrets (
     tag BLOB NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    metadata TEXT NOT NULL
+    metadata TEXT NOT NULL,
+    expires_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS vault_config (
@@ -51,6 +52,11 @@ CREATE TABLE IF NOT EXISTS vault_tokens_revoked (
 );
 """
 
+# Applied once per connection via ALTER TABLE (idempotent via exception suppression)
+_COLUMN_MIGRATIONS: list[str] = [
+    "ALTER TABLE secrets ADD COLUMN expires_at TEXT",
+]
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -81,6 +87,12 @@ class VaultDatabase:
             conn.execute("PRAGMA secure_delete = ON")
             if not self._schema_current:
                 conn.executescript(MIGRATIONS)
+                for stmt in _COLUMN_MIGRATIONS:
+                    try:
+                        conn.execute(stmt)
+                    except sqlite3.OperationalError:
+                        pass  # column already exists
+                conn.commit()
                 self._schema_current = True
             yield conn
             conn.commit()
@@ -99,19 +111,19 @@ class VaultDatabase:
                 (key, value),
             )
 
-    def insert_secret(self, secret_id: str, secret_type: str, label: str, ciphertext: bytes, nonce: bytes, tag: bytes, metadata: dict[str, Any]) -> None:
+    def insert_secret(self, secret_id: str, secret_type: str, label: str, ciphertext: bytes, nonce: bytes, tag: bytes, metadata: dict[str, Any], expires_at: str | None = None) -> None:
         now = utc_now()
         with self.connection() as conn:
             conn.execute(
-                "INSERT INTO secrets(id, type, label, data, nonce, tag, created_at, updated_at, metadata) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (secret_id, secret_type, label, ciphertext, nonce, tag, now, now, json.dumps(metadata, separators=(",", ":"))),
+                "INSERT INTO secrets(id, type, label, data, nonce, tag, created_at, updated_at, metadata, expires_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (secret_id, secret_type, label, ciphertext, nonce, tag, now, now, json.dumps(metadata, separators=(",", ":")), expires_at),
             )
 
-    def update_secret(self, secret_id: str, secret_type: str, label: str, ciphertext: bytes, nonce: bytes, tag: bytes, metadata: dict[str, Any]) -> None:
+    def update_secret(self, secret_id: str, secret_type: str, label: str, ciphertext: bytes, nonce: bytes, tag: bytes, metadata: dict[str, Any], expires_at: str | None = None) -> None:
         with self.connection() as conn:
             conn.execute(
-                "UPDATE secrets SET type = ?, label = ?, data = ?, nonce = ?, tag = ?, updated_at = ?, metadata = ? WHERE id = ?",
-                (secret_type, label, ciphertext, nonce, tag, utc_now(), json.dumps(metadata, separators=(",", ":")), secret_id),
+                "UPDATE secrets SET type = ?, label = ?, data = ?, nonce = ?, tag = ?, updated_at = ?, metadata = ?, expires_at = ? WHERE id = ?",
+                (secret_type, label, ciphertext, nonce, tag, utc_now(), json.dumps(metadata, separators=(",", ":")), expires_at, secret_id),
             )
             if conn.total_changes == 0:
                 raise KeyError(f"Secret not found: {secret_id}")
@@ -125,7 +137,7 @@ class VaultDatabase:
 
     def list_secrets(self) -> list[dict[str, Any]]:
         with self.connection() as conn:
-            rows = conn.execute("SELECT id, type, label, metadata, created_at, updated_at FROM secrets ORDER BY updated_at DESC").fetchall()
+            rows = conn.execute("SELECT id, type, label, metadata, created_at, updated_at, expires_at FROM secrets ORDER BY updated_at DESC").fetchall()
         return [dict(row) | {"metadata": json.loads(row["metadata"])} for row in rows]
 
     def delete_secret(self, secret_id: str) -> None:
@@ -183,3 +195,13 @@ class VaultDatabase:
         with self.connection() as conn:
             row = conn.execute("SELECT token FROM vault_tokens_revoked WHERE token = ?", (token,)).fetchone()
             return row is not None
+
+    def vacuum(self) -> None:
+        with self.connection() as conn:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        # VACUUM must run outside a transaction
+        conn = sqlite3.connect(self.db_path)
+        try:
+            conn.execute("VACUUM")
+        finally:
+            conn.close()

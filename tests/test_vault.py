@@ -293,3 +293,105 @@ def test_revoke_token_requires_valid_password(vault: VaultKnox) -> None:
 
     with pytest.raises(VaultError):
         vault.revoke_token("wrong password", token)
+
+
+def test_expired_secret_returns_expired_flag(vault: VaultKnox) -> None:
+    from datetime import datetime, timedelta, timezone
+    vault.initialize("correct horse battery staple")
+    vault.unlock("correct horse battery staple")
+    past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    vault.add_secret(
+        "correct horse battery staple",
+        "old_key",
+        "api_key",
+        "Old Key",
+        {"key": "sk-expired", "service": "OldService"},
+        expires_at=past,
+    )
+
+    result = vault.get_secret("correct horse battery staple", "old_key")
+    assert result["expired"] is True
+    assert result["id"] == "old_key"
+    assert "payload" not in result
+
+
+def test_non_expired_secret_returns_payload(vault: VaultKnox) -> None:
+    from datetime import datetime, timedelta, timezone
+    vault.initialize("correct horse battery staple")
+    vault.unlock("correct horse battery staple")
+    future = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+    vault.add_secret(
+        "correct horse battery staple",
+        "fresh_key",
+        "api_key",
+        "Fresh Key",
+        {"key": "sk-fresh", "service": "FreshService"},
+        expires_at=future,
+    )
+
+    result = vault.get_secret("correct horse battery staple", "fresh_key")
+    assert "expired" not in result
+    assert result["payload"]["key"] == "sk-fresh"
+
+
+def test_secret_with_no_expiry_returns_payload(vault: VaultKnox) -> None:
+    vault.initialize("correct horse battery staple")
+    vault.unlock("correct horse battery staple")
+    vault.add_secret(
+        "correct horse battery staple",
+        "permanent_key",
+        "api_key",
+        "Permanent Key",
+        {"key": "sk-permanent", "service": "Forever"},
+    )
+
+    result = vault.get_secret("correct horse battery staple", "permanent_key")
+    assert result["payload"]["key"] == "sk-permanent"
+
+
+def test_bulk_import_secrets(vault: VaultKnox) -> None:
+    vault.initialize("correct horse battery staple")
+    vault.unlock("correct horse battery staple")
+
+    entries = [
+        {"id": "bulk_key1", "type": "api_key", "label": "Key One", "data": {"key": "sk-1", "service": "Svc1"}},
+        {"id": "bulk_key2", "type": "api_key", "label": "Key Two", "data": {"key": "sk-2", "service": "Svc2"}},
+        {"id": "bulk_note", "type": "note", "label": "A Note", "data": {"content": "hello world"}},
+    ]
+    result = vault.bulk_import_secrets("correct horse battery staple", entries)
+
+    assert set(result["imported"]) == {"bulk_key1", "bulk_key2", "bulk_note"}
+    assert result["skipped"] == []
+
+    secret = vault.get_secret("correct horse battery staple", "bulk_key1")
+    assert secret["payload"]["key"] == "sk-1"
+
+
+def test_bulk_import_skips_duplicates(vault: VaultKnox) -> None:
+    vault.initialize("correct horse battery staple")
+    vault.unlock("correct horse battery staple")
+    vault.add_secret(
+        "correct horse battery staple",
+        "existing",
+        "api_key",
+        "Existing",
+        {"key": "sk-existing", "service": "Existing"},
+    )
+
+    entries = [
+        {"id": "existing", "type": "api_key", "label": "Duplicate", "data": {"key": "sk-dup", "service": "Dup"}},
+        {"id": "new_key", "type": "api_key", "label": "New", "data": {"key": "sk-new", "service": "New"}},
+    ]
+    result = vault.bulk_import_secrets("correct horse battery staple", entries)
+
+    assert "new_key" in result["imported"]
+    assert "existing" in result["skipped"]
+
+
+def test_bulk_import_validation_error_raises(vault: VaultKnox) -> None:
+    vault.initialize("correct horse battery staple")
+    entries = [
+        {"id": "bad", "type": "api_key", "label": "Bad", "data": {"service": "missing_key_field"}},
+    ]
+    with pytest.raises(VaultError, match="missing_key_field|key"):
+        vault.bulk_import_secrets("correct horse battery staple", entries)

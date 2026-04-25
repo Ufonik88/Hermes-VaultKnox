@@ -1,5 +1,6 @@
 import pytest
-from hypothesis import given, settings
+from cryptography.exceptions import InvalidTag
+from hypothesis import given
 from hypothesis import strategies as st
 
 from vaultknox.core import EncryptedPayload, decrypt_payload, derive_master_key, derive_scoped_key, encrypt_payload, generate_salt, zeroize
@@ -53,7 +54,7 @@ def test_tampered_ciphertext_raises(key: bytes) -> None:
         ciphertext=bytes([encrypted.ciphertext[0] ^ 0xFF]) + encrypted.ciphertext[1:],
         tag=encrypted.tag,
     )
-    with pytest.raises(Exception):
+    with pytest.raises(InvalidTag):
         decrypt_payload(key, tampered)
 
 
@@ -66,5 +67,5 @@ def test_tampered_tag_raises(key: bytes) -> None:
         ciphertext=encrypted.ciphertext,
         tag=bytes([encrypted.tag[0] ^ 0x01]) + encrypted.tag[1:],
     )
-    with pytest.raises(Exception):
+    with pytest.raises(InvalidTag):
         decrypt_payload(key, tampered)

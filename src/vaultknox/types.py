@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 
 class ValidationError(ValueError):
@@ -16,7 +17,9 @@ class SecretRecord:
     payload: dict[str, Any]
 
 
-ALLOWED_TYPES = {"card", "credential", "api_key", "note"}
+ALLOWED_TYPES = {"card", "credential", "api_key", "note", "connection_string", "password"}
+
+_CONNECTION_STRING_SCHEMES = {"postgresql", "postgres", "mysql", "mongodb", "redis", "amqp", "sqlite", "mssql", "mariadb"}
 
 
 def validate_secret(secret_type: str, payload: dict[str, Any]) -> None:
@@ -27,6 +30,8 @@ def validate_secret(secret_type: str, payload: dict[str, Any]) -> None:
         "credential": _validate_credential,
         "api_key": _validate_api_key,
         "note": _validate_note,
+        "connection_string": _validate_connection_string,
+        "password": _validate_password,
     }[secret_type]
     validator(payload)
 
@@ -54,6 +59,16 @@ def build_metadata(secret_type: str, payload: dict[str, Any]) -> dict[str, Any]:
             "service": _required_str(payload, "service"),
             "scope": payload.get("scope"),
         }
+    if secret_type == "connection_string":
+        parsed = urlsplit(_required_str(payload, "value"))
+        return {
+            "scheme": parsed.scheme,
+            "host": parsed.hostname or "",
+            "port": parsed.port,
+            "has_credentials": bool(parsed.username),
+        }
+    if secret_type == "password":
+        return {}
     return {"kind": "note"}
 
 
@@ -97,6 +112,22 @@ def _validate_api_key(payload: dict[str, Any]) -> None:
 
 def _validate_note(payload: dict[str, Any]) -> None:
     _required_str(payload, "content")
+
+
+def _validate_connection_string(payload: dict[str, Any]) -> None:
+    value = _required_str(payload, "value")
+    parsed = urlsplit(value)
+    if not parsed.scheme:
+        raise ValidationError("Connection string must include a scheme (e.g. postgresql://)")
+    if parsed.scheme not in _CONNECTION_STRING_SCHEMES:
+        allowed = ", ".join(sorted(_CONNECTION_STRING_SCHEMES))
+        raise ValidationError(f"Unsupported connection string scheme '{parsed.scheme}'. Allowed: {allowed}")
+    if not parsed.netloc and parsed.scheme != "sqlite":
+        raise ValidationError("Connection string must include a host")
+
+
+def _validate_password(payload: dict[str, Any]) -> None:
+    _required_str(payload, "value")
 
 
 def _required_str(payload: dict[str, Any], field: str) -> str:

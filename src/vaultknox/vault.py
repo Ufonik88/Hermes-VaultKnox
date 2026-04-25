@@ -87,27 +87,31 @@ class VaultKnox:
         self._require_unlocked()
         return self.db.list_secrets()
 
-    def add_secret(self, password: str, secret_id: str, secret_type: str, label: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def add_secret(self, password: str, secret_id: str, secret_type: str, label: str, payload: dict[str, Any], expires_at: str | None = None) -> dict[str, Any]:
         key = self._entry_key(password)
         validate_secret(secret_type, payload)
         metadata = build_metadata(secret_type, payload)
         encrypted = encrypt_payload(key, payload)
-        self.db.insert_secret(secret_id, secret_type, label, encrypted.ciphertext, encrypted.nonce, encrypted.tag, metadata)
+        self.db.insert_secret(secret_id, secret_type, label, encrypted.ciphertext, encrypted.nonce, encrypted.tag, metadata, expires_at)
         write_audit_event(self.paths.audit_log_path, "add", "success", secret_id=secret_id)
         return masked_view(secret_id, secret_type, label, metadata)
 
-    def update_secret(self, password: str, secret_id: str, secret_type: str, label: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def update_secret(self, password: str, secret_id: str, secret_type: str, label: str, payload: dict[str, Any], expires_at: str | None = None) -> dict[str, Any]:
         key = self._entry_key(password)
         validate_secret(secret_type, payload)
         metadata = build_metadata(secret_type, payload)
         encrypted = encrypt_payload(key, payload)
-        self.db.update_secret(secret_id, secret_type, label, encrypted.ciphertext, encrypted.nonce, encrypted.tag, metadata)
+        self.db.update_secret(secret_id, secret_type, label, encrypted.ciphertext, encrypted.nonce, encrypted.tag, metadata, expires_at)
         write_audit_event(self.paths.audit_log_path, "update", "success", secret_id=secret_id)
         return masked_view(secret_id, secret_type, label, metadata)
 
     def get_secret(self, password: str, secret_id: str) -> dict[str, Any]:
         key = self._entry_key(password)
         row = self.db.get_secret_row(secret_id)
+        expires_at = row["expires_at"] if "expires_at" in row.keys() else None
+        if expires_at and datetime.fromisoformat(expires_at) <= datetime.now(timezone.utc):
+            write_audit_event(self.paths.audit_log_path, "get_raw", "expired", secret_id=secret_id)
+            return {"expired": True, "expires_at": expires_at, "id": secret_id}
         encrypted = EncryptedPayload(nonce=row["nonce"], ciphertext=row["data"], tag=row["tag"])
         try:
             secret = decrypt_payload(key, encrypted)
@@ -125,6 +129,10 @@ class VaultKnox:
     def get_masked(self, secret_id: str, purpose: str | None = None, token_ttl_seconds: int = DEFAULT_TOKEN_TTL_SECONDS) -> dict[str, Any]:
         self._require_unlocked()
         row = self.db.get_secret_row(secret_id)
+        expires_at = row["expires_at"] if "expires_at" in row.keys() else None
+        if expires_at and datetime.fromisoformat(expires_at) <= datetime.now(timezone.utc):
+            write_audit_event(self.paths.audit_log_path, "get_masked", "expired", secret_id=secret_id)
+            return {"expired": True, "expires_at": expires_at, "id": secret_id}
         metadata = json.loads(row["metadata"])
         token = None
         if purpose:
@@ -276,6 +284,39 @@ class VaultKnox:
         self.db.revoke_token(token, reason)
         write_audit_event(self.paths.audit_log_path, "revoke_token", "success", details={"token_prefix": token[:8]})
         return {"revoked": True}
+
+    def bulk_import_secrets(self, password: str, entries: list[dict[str, Any]]) -> dict[str, Any]:
+        """Import multiple secrets in a single operation. All entries are validated before any are written."""
+        key = self._entry_key(password)
+        prepared: list[tuple[str, str, str, dict, dict, Any, str | None]] = []
+        for i, entry in enumerate(entries):
+            try:
+                secret_id = entry["id"]
+                secret_type = entry["type"]
+                label = entry["label"]
+                payload = entry["data"]
+                expires_at = entry.get("expires_at")
+            except KeyError as exc:
+                raise VaultError(f"Entry {i}: missing required field {exc}") from exc
+            try:
+                validate_secret(secret_type, payload)
+            except Exception as exc:  # noqa: BLE001
+                raise VaultError(f"Entry {i} ('{secret_id}'): {exc}") from exc
+            metadata = build_metadata(secret_type, payload)
+            encrypted = encrypt_payload(key, payload)
+            prepared.append((secret_id, secret_type, label, metadata, encrypted, expires_at, payload))
+
+        imported: list[str] = []
+        skipped: list[str] = []
+        for secret_id, secret_type, label, metadata, encrypted, expires_at, _ in prepared:
+            try:
+                self.db.insert_secret(secret_id, secret_type, label, encrypted.ciphertext, encrypted.nonce, encrypted.tag, metadata, expires_at)
+                imported.append(secret_id)
+            except Exception:  # noqa: BLE001
+                skipped.append(secret_id)
+
+        write_audit_event(self.paths.audit_log_path, "bulk_import", "success", details={"imported": len(imported), "skipped": len(skipped)})
+        return {"imported": imported, "skipped": skipped}
 
     def _entry_key(self, password: str) -> bytes:
         self._verify_password(password)
