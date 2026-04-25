@@ -6,11 +6,11 @@ VaultKnox is an encrypted secrets vault designed for Hermes Agent workflows. It 
 
 ## Status
 
-VaultKnox is currently alpha software.
+VaultKnox v1.0 is stable.
 
-- Intended use: local development and controlled operator-managed Hermes environments.
-- Not yet intended as audited security software for general production deployment.
-- Public release note: use this only if you understand the threat model and operational limits.
+- Intended use: local development and operator-managed Hermes environments.
+- Review the threat model before deploying in high-risk environments.
+- Report issues at [github.com/Ufonik88/Hermes-VaultKnox/issues](https://github.com/Ufonik88/Hermes-VaultKnox/issues).
 
 ## Ownership
 
