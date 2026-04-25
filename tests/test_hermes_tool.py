@@ -83,3 +83,20 @@ def test_revoke_token_via_hermes_blocks_consume(runtime_dir: Path) -> None:
 
     with pytest.raises(VaultError, match="revoked"):
         vault_tool("consume_token", runtime_dir=str(runtime_dir), master_password="password", token=token)
+
+
+def test_sensitive_action_requires_master_password(runtime_dir: Path) -> None:
+    vault = VaultKnox(expand_runtime_path(runtime_dir))
+    vault.initialize("password")
+    vault.unlock("password")
+
+    with pytest.raises(VaultError, match="requires master_password"):
+        vault_tool(
+            "add",
+            allow_write=True,
+            runtime_dir=str(runtime_dir),
+            secret_id="note_1",
+            secret_type="note",
+            label="Note",
+            payload={"content": "secret"},
+        )

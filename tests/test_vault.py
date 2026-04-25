@@ -367,7 +367,7 @@ def test_bulk_import_secrets(vault: VaultKnox) -> None:
     assert secret["payload"]["key"] == "sk-1"
 
 
-def test_bulk_import_skips_duplicates(vault: VaultKnox) -> None:
+def test_bulk_import_duplicate_rolls_back_all(vault: VaultKnox) -> None:
     vault.initialize("correct horse battery staple")
     vault.unlock("correct horse battery staple")
     vault.add_secret(
@@ -382,10 +382,11 @@ def test_bulk_import_skips_duplicates(vault: VaultKnox) -> None:
         {"id": "existing", "type": "api_key", "label": "Duplicate", "data": {"key": "sk-dup", "service": "Dup"}},
         {"id": "new_key", "type": "api_key", "label": "New", "data": {"key": "sk-new", "service": "New"}},
     ]
-    result = vault.bulk_import_secrets("correct horse battery staple", entries)
+    with pytest.raises(VaultError, match="rolled back"):
+        vault.bulk_import_secrets("correct horse battery staple", entries)
 
-    assert "new_key" in result["imported"]
-    assert "existing" in result["skipped"]
+    with pytest.raises(KeyError):
+        vault.db.get_secret_row("new_key")
 
 
 def test_bulk_import_validation_error_raises(vault: VaultKnox) -> None:

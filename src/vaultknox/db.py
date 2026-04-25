@@ -96,6 +96,9 @@ class VaultDatabase:
                 self._schema_current = True
             yield conn
             conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
 

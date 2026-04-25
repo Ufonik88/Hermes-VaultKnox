@@ -288,7 +288,7 @@ class VaultKnox:
     def bulk_import_secrets(self, password: str, entries: list[dict[str, Any]]) -> dict[str, Any]:
         """Import multiple secrets in a single operation. All entries are validated before any are written."""
         key = self._entry_key(password)
-        prepared: list[tuple[str, str, str, dict, dict, Any, str | None]] = []
+        prepared: list[tuple[str, str, str, dict[str, Any], EncryptedPayload, str | None]] = []
         for i, entry in enumerate(entries):
             try:
                 secret_id = entry["id"]
@@ -304,19 +304,40 @@ class VaultKnox:
                 raise VaultError(f"Entry {i} ('{secret_id}'): {exc}") from exc
             metadata = build_metadata(secret_type, payload)
             encrypted = encrypt_payload(key, payload)
-            prepared.append((secret_id, secret_type, label, metadata, encrypted, expires_at, payload))
+            prepared.append((secret_id, secret_type, label, metadata, encrypted, expires_at))
 
         imported: list[str] = []
-        skipped: list[str] = []
-        for secret_id, secret_type, label, metadata, encrypted, expires_at, _ in prepared:
-            try:
-                self.db.insert_secret(secret_id, secret_type, label, encrypted.ciphertext, encrypted.nonce, encrypted.tag, metadata, expires_at)
-                imported.append(secret_id)
-            except Exception:  # noqa: BLE001
-                skipped.append(secret_id)
+        try:
+            with self.db.connection() as conn:
+                for secret_id, secret_type, label, metadata, encrypted, expires_at in prepared:
+                    now = datetime.now(timezone.utc).isoformat()
+                    conn.execute(
+                        "INSERT INTO secrets(id, type, label, data, nonce, tag, created_at, updated_at, metadata, expires_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            secret_id,
+                            secret_type,
+                            label,
+                            encrypted.ciphertext,
+                            encrypted.nonce,
+                            encrypted.tag,
+                            now,
+                            now,
+                            json.dumps(metadata, separators=(",", ":")),
+                            expires_at,
+                        ),
+                    )
+                    imported.append(secret_id)
+        except Exception as exc:  # noqa: BLE001
+            write_audit_event(
+                self.paths.audit_log_path,
+                "bulk_import",
+                "failure",
+                details={"error": str(exc), "requested": len(prepared)},
+            )
+            raise VaultError(f"Bulk import failed and was rolled back: {exc}") from exc
 
-        write_audit_event(self.paths.audit_log_path, "bulk_import", "success", details={"imported": len(imported), "skipped": len(skipped)})
-        return {"imported": imported, "skipped": skipped}
+        write_audit_event(self.paths.audit_log_path, "bulk_import", "success", details={"imported": len(imported), "skipped": 0})
+        return {"imported": imported, "skipped": []}
 
     def _entry_key(self, password: str) -> bytes:
         self._verify_password(password)
