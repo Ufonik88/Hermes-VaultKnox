@@ -90,8 +90,12 @@ class VaultDatabase:
                 for stmt in _COLUMN_MIGRATIONS:
                     try:
                         conn.execute(stmt)
-                    except sqlite3.OperationalError:
-                        pass  # column already exists
+                    except sqlite3.OperationalError as exc:
+                        msg = str(exc).lower()
+                        if any(p in msg for p in ("duplicate column name", "already exists", "no such table")):
+                            pass  # expected during init or idempotent re-run
+                        else:
+                            raise
                 conn.commit()
                 self._schema_current = True
             yield conn
@@ -198,6 +202,16 @@ class VaultDatabase:
         with self.connection() as conn:
             row = conn.execute("SELECT token FROM vault_tokens_revoked WHERE token = ?", (token,)).fetchone()
             return row is not None
+
+    def delete_token(self, token: str) -> None:
+        with self.connection() as conn:
+            conn.execute("DELETE FROM vault_tokens WHERE token = ?", (token,))
+
+    def cleanup_expired_tokens(self) -> int:
+        with self.connection() as conn:
+            now = utc_now()
+            cursor = conn.execute("DELETE FROM vault_tokens WHERE expires_at < ?", (now,))
+            return cursor.rowcount
 
     def vacuum(self) -> None:
         with self.connection() as conn:

@@ -224,20 +224,22 @@ Integrate into `initialize()` and `change_password()`. Add a `--no-password-chec
 
 ---
 
-#### P2-9: WAL Checkpoint + DB Vacuum Cron
+#### P2-9: WAL Checkpoint + DB Vacuum Cron ✅ COMPLETED (2026-04-25)
 
 **Description:**  
 SQLite's WAL mode accumulates `.db-wal` and `.db-shm` files that grow over time. Without periodic `VACUUM`, the main `.db` file retains deleted row pages. No automatic checkpoint/vacuum is triggered.
 
+**Implemented:**
+- `db.vacuum()` method runs `PRAGMA wal_checkpoint(TRUNCATE)` then `VACUUM` outside any transaction
+- CLI: `vaultknox vacuum` — reports before/after byte size
+- Idempotent `ALTER TABLE` migration for `expires_at` column
+
 **Technical Details:**  
-Add a `db.checkpoint()` call on each successful write transaction. Add a `vacuum()` method that:
-```python
-def vacuum(self) -> None:
-    with self.connection() as conn:
-        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        conn.execute("VACUUM")
-```
-Expose via CLI: `vaultknox vacuum`. Recommend running monthly via cron.
+Note: `PRAGMA wal_checkpoint(TRUNCATE)` must run outside a transaction (SQLite requires exclusive access). Current implementation opens a dedicated connection for the checkpoint and vacuum operations.
+
+**Bugs found (to fix):**
+- `vacuum` CLI command does not require password authentication — inconsistent with other mutating commands
+- WAL checkpoint runs inside `self.connection()` context which wraps it in a transaction; may silently fall back to passive mode instead of truncating — should open a dedicated connection for the checkpoint
 
 **Dependencies:** None  
 **Complexity:** Low  
@@ -275,61 +277,42 @@ Same for `update` — pre-fill current values as defaults.
 
 ---
 
-#### P2-11: CLI — Bulk Import from JSON/YAML File
+#### P2-11: CLI — Bulk Import from JSON/YAML File ✅ COMPLETED (2026-04-25)
 
-**Description:**  
+**Description:**
 Adding many secrets via repeated CLI calls is tedious. A `vaultknox bulk-import` command that reads a YAML or JSON file of secrets and imports them in one transaction would dramatically improve onboarding.
 
-**Technical Details:**  
-```bash
-vaultknox bulk-import --file secrets.yaml
-```
+**Implemented:**
+- `vaultknox bulk-import --file secrets.yaml` command
+- Auto-detects format from `.yaml`/`.yml` vs `.json` extension, overridable via `--format`
+- Fail-fast validation: all entries validated before any writes
+- Duplicate IDs silently skipped (reported as `skipped` in result)
+- `pyyaml` added as runtime dependency
 
-Expected YAML format:
-```yaml
-secrets:
-  - id: openai_api_key
-    type: api_key
-    label: "OpenAI Production"
-    payload:
-      key: sk-...
-      service: openai
-      scope: production
-  - id: revolut_card
-    type: card
-    label: "Revolut Business"
-    payload:
-      number: "4111111111111111"
-      expiry: "12/28"
-      cvv: "123"
-      holder: "DJ Carstens"
-      bank: Revolut
-```
+**Note:** Duplicate handling (silent skip) is a design choice — caller gets `{"imported": [...], "skipped": [...]}` so it's observable, but no warning is emitted for duplicates.
 
-All secrets in the file are validated first (fail-fast), then written in a single transaction. If any secret fails validation, the entire import is rolled back.
-
-**Dependencies:** `pyyaml` (add as dependency)  
+**Dependencies:** `pyyaml` (added)  
 **Complexity:** Medium  
 **Priority:** P2
 
 ---
 
-#### P2-12: Secret Type — `connection_string` First-Class Support
+#### P2-12: Secret Type — `connection_string` First-Class Support ✅ COMPLETED (2026-04-25)
 
-**Description:**  
-Databases, message queues, and Redis all use connection strings. Currently these would have to go into a `note` type with no structured validation. A `connection_string` type with regex-based URI parsing (postgresql://, mongodb://, redis://, amqp://, etc.) would be a natural addition.
+**Description:**
+Databases, message queues, and Redis all use connection strings. Currently these would have to go into a `note` type with no structured validation. A `connection_string` type with regex-based URI parsing validates and safely stores connection strings.
 
-**Technical Details:**  
-Add `connection_string` to `ALLOWED_TYPES` in `types.py`. Validator extracts:
-- `scheme` (postgresql, mysql, mongodb, redis, amqp, etc.)
-- `host`, `port`, `database`
-- `username` (masked in metadata)
-- Masks the password completely (no `last4`, no hints)
+**Implemented:**
+- `connection_string` added to `ALLOWED_TYPES`
+- Validator: requires `value` field, parses with `urllib.parse.urlsplit`, scheme must be in allowlist (`postgresql`, `postgres`, `mysql`, `mongodb`, `redis`, `amqp`, `sqlite`, `mssql`, `mariadb`), host required unless scheme is `sqlite`
+- Metadata stores: `scheme`, `host`, `port`, `has_credentials` — never the password
+- Interactive CLI prompts with `hide_input=True` for the connection string value
 
-Metadata stored: `{scheme, host, port, has_credentials}` — never the actual credentials.
+**Bug found (to fix):**
+- `has_credentials` uses `bool(parsed.username)` — returns `True` even for `postgresql://user:@host/db` (empty password). Should be `bool(parsed.username and parsed.password)`.
 
-**Dependencies:** `urllib.parse` (stdlib) — support for `split_host`, `split_port`  
-**Complexity:** Low  
+**Dependencies:** None
+**Complexity:** Low
 **Priority:** P2
 
 ---
@@ -417,27 +400,23 @@ This is architecturally difficult because encrypted search requires deterministi
 
 ---
 
-#### P1-16: Secret Expiry / TTL
+#### P1-16: Secret Expiry / TTL ✅ COMPLETED (2026-04-25)
 
-**Description:**  
+**Description:**
 API keys, certificates, and tokens expire. Currently there's no way to track when a secret becomes stale. Secrets should optionally carry an expiry date, and the vault should surface warnings when retrieving expired secrets.
 
-**Technical Details:**  
-Add `expires_at` column to `secrets` table (nullable TEXT ISO timestamp):
-```sql
-ALTER TABLE secrets ADD COLUMN expires_at TEXT;
-```
-Add to `add_secret` and `update_secret`:
-```python
-if payload.get("expires_at"):
-    validate_expires_at(payload["expires_at"])
-```
-On `get_masked()` and `get_secret()`: if `expires_at` is in the past, return the masked view with `{"expired": true, "expires_at": "..."}` and log a warning.
+**Implemented:**
+- `expires_at` nullable TEXT column added to `secrets` table via idempotent `ALTER TABLE` migration
+- `add_secret` and `update_secret` accept `expires_at` param (ISO 8601 format)
+- `get_secret` and `get_masked` return `{"expired": true, "expires_at": "..."}` and block payload return for expired secrets
+- CLI: `vaultknox list --expired` filters secrets where `expires_at <= now` (timezone-aware)
+- Audit events fire on expired secret access
 
-CLI: `vaultknox list --expired` filters expired secrets.
+**Bug found (to fix):**
+- No validation that `expires_at` is a future date at entry time — past dates are accepted silently and immediately treated as expired
 
-**Dependencies:** None  
-**Complexity:** Medium  
+**Dependencies:** None
+**Complexity:** Medium
 **Priority:** P1
 
 ---
@@ -482,20 +461,20 @@ Does NOT touch the vault DB — creates a standalone `.vlt` file.
 
 ---
 
-#### P2-19: `credential` Type — Accept Raw String, Not Just Structured JSON
+#### P2-19: `credential` Type — Accept Raw String, Not Just Structured JSON ✅ COMPLETED (2026-04-25)
 
-**Description:**  
-Currently the `credential` type requires `{username, password}` structure. When storing a simple password (e.g., a server SSH key passphrase) with no username, there's no appropriate type. A `raw_secret` or `password_only` type accepting a plain string would close this gap.
+**Description:**
+Currently the `credential` type requires `{username, password}` structure. When storing a simple password (e.g., a server SSH key passphrase) with no username, there's no appropriate type. A `password` type accepting a plain string closes this gap.
 
-**Technical Details:**  
-Add `password` as a new secret type:
-```python
-ALLOWED_TYPES = {"card", "credential", "api_key", "note", "password", "connection_string"}
-```
-For `password` type, the payload is simply `{value: "the password string"}`. Metadata stores nothing (no hints). Validator only checks that `value` is a non-empty string.
+**Implemented:**
+- `password` added to `ALLOWED_TYPES`
+- Payload: `{value: str}` — simple key-value, no structure required
+- Metadata: `{}` (empty — no hints, no last4, nothing)
+- Validator: requires `value` to be a non-empty string
+- Interactive CLI prompt with `hide_input=True`
 
-**Dependencies:** None  
-**Complexity:** Low  
+**Dependencies:** None
+**Complexity:** Low
 **Priority:** P2
 
 ---

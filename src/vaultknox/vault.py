@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from vaultknox.audit import write_audit_event
@@ -28,6 +29,14 @@ _ENV_FIELD_BY_TYPE: dict[str, str] = {
     "password": "value",
     "connection_string": "value",
 }
+
+
+def _safe_env_pop(var_name: str) -> None:
+    """Safely remove an injected env var at exit; ignore if already absent."""
+    try:
+        os.environ.pop(var_name, None)
+    except Exception:
+        pass
 
 
 class VaultError(RuntimeError):
@@ -115,7 +124,7 @@ class VaultKnox:
         encrypted = EncryptedPayload(nonce=row["nonce"], ciphertext=row["data"], tag=row["tag"])
         try:
             secret = decrypt_payload(key, encrypted)
-        except Exception as exc:  # noqa: BLE001
+        except (InvalidTag, ValueError, KeyError) as exc:
             write_audit_event(self.paths.audit_log_path, "get_raw", "failure", secret_id=secret_id)
             raise VaultError("Secret decryption failed; data may be corrupted") from exc
         write_audit_event(self.paths.audit_log_path, "get_raw", "success", secret_id=secret_id)
@@ -259,13 +268,17 @@ class VaultKnox:
     def consume_token(self, password: str, token: str) -> dict[str, Any]:
         if self.db.is_token_revoked(token):
             raise VaultError("Token has been revoked")
-        row = self.db.get_token_row(token)
+        try:
+            row = self.db.get_token_row(token)
+        except KeyError:
+            raise VaultError("Token not found or already used") from None
         if row["used_at"] is not None:
             raise VaultError("Token already used")
         if datetime.fromisoformat(row["expires_at"]) <= datetime.now(timezone.utc):
             raise VaultError("Token expired")
         secret = self.get_secret(password, row["secret_id"])
         self.db.mark_token_used(token)
+        self.db.delete_token(token)
         write_audit_event(self.paths.audit_log_path, "consume_token", "success", secret_id=row["secret_id"])
         return secret
 
@@ -275,7 +288,7 @@ class VaultKnox:
         if field is None or field not in secret["payload"]:
             raise VaultError(f"Cannot determine primary value field for secret type '{secret['type']}'")
         os.environ[env_var] = secret["payload"][field]
-        atexit.register(os.environ.pop, env_var, None)
+        atexit.register(_safe_env_pop, env_var)
         write_audit_event(self.paths.audit_log_path, "inject_env", "success", secret_id=secret_id, details={"env_var": env_var})
         return {"injected": env_var, "secret_id": secret_id}
 
@@ -284,6 +297,12 @@ class VaultKnox:
         self.db.revoke_token(token, reason)
         write_audit_event(self.paths.audit_log_path, "revoke_token", "success", details={"token_prefix": token[:8]})
         return {"revoked": True}
+
+    def cleanup_expired_tokens(self) -> dict[str, Any]:
+        """Remove expired tokens from the database. Returns count of deleted tokens."""
+        count = self.db.cleanup_expired_tokens()
+        write_audit_event(self.paths.audit_log_path, "cleanup_expired_tokens", "success", details={"deleted_count": count})
+        return {"deleted_count": count}
 
     def bulk_import_secrets(self, password: str, entries: list[dict[str, Any]]) -> dict[str, Any]:
         """Import multiple secrets in a single operation. All entries are validated before any are written."""

@@ -257,6 +257,15 @@ def vacuum(obj: dict[str, VaultKnox]) -> None:
     click.echo(json.dumps({"before_bytes": before, "after_bytes": after, "saved_bytes": before - after}, indent=2))
 
 
+@main.command("cleanup-tokens")
+@click.pass_obj
+def cleanup_tokens(obj: dict[str, VaultKnox]) -> None:
+    """Remove expired one-time tokens from the database."""
+    vault = obj["vault"]
+    result = vault.cleanup_expired_tokens()
+    click.echo(json.dumps(result, indent=2))
+
+
 @main.command("bulk-import")
 @click.option("--file", "file_path", required=True, type=click.Path(exists=True, path_type=Path), help="YAML or JSON file containing secrets to import.")
 @click.option("--format", "file_format", type=click.Choice(["yaml", "json"], case_sensitive=False), default=None, help="File format. Defaults to auto-detect from extension.")
