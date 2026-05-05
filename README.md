@@ -18,20 +18,63 @@ Author: Ufonik
 
 This project is released under the Apache 2.0 license. The code remains copyrighted to Ufonik while permitting public use, modification, and redistribution under that license.
 
+
+## Getting Started
+
+## Getting Started
+
+### Installation
+
+```bash
+pip install -e .[dev]
+```
+
+### Initialize the Encrypted Store
+
+```bash
+hermes-secrets init
+```
+
+### Add Your First API Key
+
+```bash
+hermes-secrets add NOTION_API_KEY=your-secret-key-here
+```
+
+### Use in a Script
+
+```python
+from vaultknox.autonomous_secrets import AutonomousSecretsStore
+
+secrets = AutonomousSecretsStore()
+api_key = secrets.get("NOTION_API_KEY")
+print(f"API Key: {api_key}")
+```
+
+### Use in Cron Jobs
+
+Add this line to the top of your cron prompt:
+
+```bash
+eval "$(python3 ~/.hermes/encrypted-secrets/secrets_manager.py env)"
+```
+
+Then access credentials as environment variables.
+
+
 ## Key Design
+
 
 - Hermes never sees plaintext secrets; it only receives masked references and one-time tokens.
 - AES-256-GCM protects stored payloads with unique random nonces.
 - Argon2id derives the master key, with HKDF used for scoped key separation.
 - SQLite stores encrypted vault data at `~/.hermes/vaultknox/secrets.db`.
-- The master password is never stored on disk and is only held during an unlocked session.
 - Auto-lock defaults to 15 minutes of inactivity.
 - Audit logs are written to `~/.hermes/vaultknox/audit.log` with owner-only permissions.
 
 ## Features
 
 - AES-256-GCM encryption for stored secret payloads
-- Argon2id-based master password key derivation with HKDF key separation
 - SQLite-backed local vault storage
 - Masked secret retrieval for agent-safe responses
 - One-time token issuance for downstream automation
@@ -93,7 +136,7 @@ hermes-vault --logo status
 
 ```bash
 hermes-vault init
-hermes-vault unlock
+# hermes-vault unlock  # Legacy - not needed for autonomous secrets
 hermes-vault add --id revolut_card --type card --label "Revolut Virtual Card" --data '{"number":"4111111111111111","expiry":"12/28","cvv":"123","holder":"DJ C","bank":"Revolut"}'
 hermes-vault get revolut_card --mask --purpose booking
 hermes-vault export --file backup.vault
@@ -101,7 +144,14 @@ hermes-vault export --file backup.vault
 
 ## Runtime Layout
 
-Default runtime files are stored under `~/.hermes/vaultknox/`.
+Default runtime files are stored under `~/.hermes/`:
+
+- `~/.hermes/vaultknox/` — legacy master-password vault (optional)
+- `~/.hermes/encrypted-secrets/` — autonomous key-file-backed encrypted store (recommended)
+
+The `encrypted-secrets/` directory contains:
+- `master.key` — AES-256 key (chmod 600, never in logs)
+- `secrets.enc` — encrypted JSON blob (safe for backups/git)
 
 - `secrets.db`: encrypted SQLite vault database
 - `audit.log`: audit trail with rotation
@@ -117,7 +167,6 @@ The safest integration path is the `vault_tool` wrapper in `src/vaultknox/hermes
 | Action | Description | Write Gate |
 |--------|-------------|------------|
 | `status` | Check vault state (initialized/unlocked/count) | No |
-| `unlock` | Unlock with master password | No |
 | `lock` | Lock vault | No |
 | `list` | List secrets (metadata only) | No |
 | `get_masked` | Get masked view + optional one-time token | No |
@@ -186,13 +235,14 @@ prompt — scripts and cron jobs can read credentials without human intervention
 
 ### Security Model
 
-Same as SSH private keys (`~/.ssh/id_ed25519`):
+VaultKnox Autonomous Secrets uses a **key-file-backed security model** similar to SSH keys:
 
-- The `master.key` file has owner-only permissions (chmod 600)
-- The encrypted `secrets.enc` file is safe in backups, git, and session logs
-- An attacker with root-level filesystem access can decrypt — this is the
-  accepted trade-off for full autonomy
-- The key file NEVER appears in session transcripts, memory, or tool output
+- **Key file**: `~/.hermes/encrypted-secrets/master.key` (chmod 600, owner-only)
+- **Encryption**: AES-256-GCM with unique random nonces per encryption
+- **Storage**: `secrets.enc` contains the encrypted credentials — safe for backups, git, and session logs
+- **Threat model**: An attacker with root access to the filesystem can decrypt the secrets. This is the accepted trade-off for full autonomy without manual password prompts.
+- **Operational security**: The key file must never appear in session transcripts, memory, or tool output. Ensure proper file permissions (chmod 600) and protect the key file like an SSH private key.
+
 
 ### Usage
 
