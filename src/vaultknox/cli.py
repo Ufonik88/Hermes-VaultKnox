@@ -392,6 +392,42 @@ def secrets_populate(obj: dict, env_file: str, overwrite: bool) -> None:
     click.echo(f"  Imported {stored} new secret(s) — {len(results)} total processed")
 
 
+@secrets.command("auto-seal")
+@click.option("--dry-run", is_flag=True, default=False, help="Report what would be encrypted without doing it")
+@click.option("--strip", is_flag=True, default=False, help="Replace plaintext .env values with comments after sealing")
+@click.pass_obj
+def secrets_auto_seal(obj: dict, dry_run: bool, strip: bool) -> None:
+    """
+    Auto-detect and encrypt any new credentials from .env.
+
+    Scans ~/.hermes/.env for credential keys (ending in _KEY, _TOKEN,
+    _SECRET, _PASSWORD) that aren't yet in the encrypted store, and
+    automatically encrypts them. Run this periodically or after adding
+    new API keys — it's the "set-and-forget" safety net.
+    """
+    store = AutonomousSecretsStore()
+    results = store.auto_seal(dry_run=dry_run, strip_plaintext=strip)
+
+    label = "🔄 Would seal" if dry_run else "✅ Sealed"
+
+    if results["encrypted"]:
+        for item in results["encrypted"]:
+            action = item.get("action", "encrypted")
+            click.echo(f"  {'🔮' if dry_run else '🔐'} {item['key']}: {action}")
+    else:
+        click.echo("  ✅ No new credentials detected — everything is already encrypted.")
+
+    if results["skipped"]:
+        click.echo(f"  ℹ️  Skipped {len(results['skipped'])} already-encrypted keys")
+
+    if results["errors"]:
+        for err in results["errors"]:
+            click.echo(f"  ❌ {err.get('key', '')}: {err.get('error', 'unknown error')}", err=True)
+
+    total = len(results["encrypted"])
+    click.echo(f"\n  {'🔮 Would encrypt' if dry_run else '🔐 Auto-sealed'} {total} new credential(s)")
+
+
 # ---------------------------------------------------------------------------
 # Standalone entry point for ``hermes-secrets`` CLI
 # ---------------------------------------------------------------------------

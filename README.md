@@ -227,6 +227,45 @@ eval $(python3 ~/.hermes/encrypted-secrets/secrets_manager.py env)
 
 Then use the API keys as environment variables as before.
 
+### Auto-Seal: Automatic New Credential Detection
+
+VaultKnox v0.2.0 includes an **auto-seal** mechanism that automatically detects
+and encrypts new credential keys as they're added. This prevents plaintext
+credential drift — the #1 cause of accidental leaks.
+
+**How it works:**
+
+1. Scans `~/.hermes/.env` for keys ending in `_KEY`, `_TOKEN`, `_SECRET`,
+   `_PASSWORD`, or `_CREDENTIALS`.
+2. Cross-references with the encrypted store.
+3. Encrypts any new credentials it finds.
+4. Optionally strips the plaintext from `.env` (with `--strip` flag).
+
+**Run on-demand after adding a new API key:**
+
+```bash
+# Dry-run first to see what would be encrypted:
+hermes-secrets auto-seal --dry-run
+
+# Then run it for real:
+hermes-secrets auto-seal
+```
+
+**Automatic via cron (recommended):**
+
+A cron job runs `auto-seal` every 30 minutes by default. If new credentials
+are found, they're automatically encrypted. If nothing is found, the job
+runs silently with no output. You can verify it's active:
+
+```bash
+hermes cron list | grep "Auto-Seal"
+```
+
+**Security note:** Auto-seal only encrypts. The plaintext remains in `.env`
+by default so Hermes can still read it at startup. The encrypted store is an
+additional safety net — your credentials are backed up in encrypted form
+even if the `.env` file is accidentally exposed.
+
 ### Architecture
 
 ```text

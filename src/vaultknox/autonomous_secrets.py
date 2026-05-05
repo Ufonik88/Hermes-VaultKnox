@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +45,9 @@ class AutonomousSecretsStore:
     #: Default location where the key file and encrypted store live,
     #: relative to the Hermes home directory.
     DEFAULT_SUBDIR = "encrypted-secrets"
+
+    # Default suffixes that identify credential env var names.
+    CREDENTIAL_SUFFIXES: tuple[str, ...] = ("_KEY", "_TOKEN", "_SECRET", "_PASSWORD", "_CREDENTIALS")
 
     def __init__(self, base_dir: str | os.PathLike | None = None) -> None:
         self._base_dir = Path(base_dir) if base_dir else self._find_default_dir()
@@ -162,6 +167,117 @@ class AutonomousSecretsStore:
             secrets[key] = value
             results[key] = "stored"
         self._encrypt(secrets)
+        return results
+
+    def auto_seal(
+        self,
+        env_file: str | os.PathLike | None = None,
+        *,
+        dry_run: bool = False,
+        strip_plaintext: bool = False,
+    ) -> dict[str, Any]:
+        """
+        **Auto-Seal**: automatically find and encrypt any credential keys
+        in ``.env`` that aren't yet in the encrypted store.
+
+        This is the "set-and-forget" safety net. Run periodically (via cron),
+        or on-demand after adding new API keys.
+
+        How it works:
+        1. Reads the Hermes ``.env`` file.
+        2. Identifies keys ending in credential suffixes
+           (``_KEY``, ``_TOKEN``, ``_SECRET``, ``_PASSWORD``, ``_CREDENTIALS``).
+        3. Cross-references with the encrypted store.
+        4. Encrypts any new keys.
+        5. Optionally replaces plaintext values in ``.env`` with a
+           ``# auto-sealed`` comment.
+
+        Args:
+            env_file: Path to the ``.env`` file. Defaults to
+                      ``~/.hermes/.env``.
+            dry_run: If True, only report what would be done — don't
+                     actually encrypt or modify anything.
+            strip_plaintext: If True, replace the value in ``.env`` with
+                             a ``# auto-sealed`` comment after encrypting.
+                             **Caution**: Hermes reads ``.env`` at startup,
+                             so only enable this if you're using the
+                             ``load_secrets.sh`` bootstrap.
+
+        Returns:
+            A dict with keys ``encrypted``, ``skipped``, ``errors``, and
+            ``dry_run``.
+        """
+        if env_file is None:
+            env_file = Path.home() / ".hermes" / ".env"
+        env_path = Path(env_file)
+
+        if not env_path.exists():
+            return {"encrypted": [], "skipped": [], "errors": [f"File not found: {env_path}"], "dry_run": dry_run}
+
+        current = self._decrypt()
+        results: dict[str, Any] = {
+            "encrypted": [],
+            "skipped": [],
+            "errors": [],
+            "dry_run": dry_run,
+            "scanned_at": datetime.now().isoformat(),
+        }
+
+        lines = env_path.read_text(encoding="utf-8").splitlines(keepends=True)
+        new_lines = list(lines) if strip_plaintext else None
+
+        for i, line in enumerate(lines):
+            raw = line.strip()
+            if not raw or raw.startswith("#") or "=" not in raw:
+                continue
+
+            key, _, value = raw.partition("=")
+            key = key.strip()
+            value = value.strip().strip("'\"")
+
+            if not key or not value:
+                continue
+
+            # Check if this is a credential key
+            is_credential = any(key.upper().endswith(suffix) for suffix in self.CREDENTIAL_SUFFIXES)
+            if not is_credential:
+                continue
+
+            # Check if already in encrypted store
+            if key in current:
+                results["skipped"].append({"key": key, "reason": "already encrypted"})
+                continue
+
+            # Check if value looks valid (at least 8 chars, not a placeholder)
+            if len(value) < 8 or value in ("placeholder", "changeme", "your-key-here", ""):
+                results["skipped"].append({"key": key, "reason": "placeholder or too short"})
+                continue
+
+            if dry_run:
+                results["encrypted"].append({"key": key, "value_preview": value[:8] + "...", "action": "would encrypt"})
+                continue
+
+            # Encrypt it
+            try:
+                current[key] = value
+                results["encrypted"].append({"key": key, "value_preview": value[:8] + "...", "action": "encrypted"})
+            except Exception as exc:
+                results["errors"].append({"key": key, "error": str(exc)})
+                continue
+
+            # Optionally strip plaintext from .env
+            if strip_plaintext and new_lines is not None:
+                new_lines[i] = f"# {key}=[auto-sealed by Hermes VaultKnox v0.2.0]\n"
+
+        # Write the encrypted store (if not dry run and we have changes)
+        if not dry_run and results["encrypted"]:
+            self._encrypt(current)
+
+        # Write the stripped .env (if requested)
+        if strip_plaintext and new_lines is not None and not dry_run:
+            stripped = any("# auto-sealed" in l for l in new_lines if l != lines[i])
+            env_path.write_text("".join(new_lines), encoding="utf-8")
+
         return results
 
     # ------------------------------------------------------------------
