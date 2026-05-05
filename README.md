@@ -69,14 +69,12 @@ Then access credentials as environment variables.
 - AES-256-GCM protects stored payloads with unique random nonces.
 - Argon2id derives the master key, with HKDF used for scoped key separation.
 - SQLite stores encrypted vault data at `~/.hermes/vaultknox/secrets.db`.
-- The master password is never stored on disk — only held in memory during an unlocked session (for the legacy system).
 - Auto-lock defaults to 15 minutes of inactivity.
 - Audit logs are written to `~/.hermes/vaultknox/audit.log` with owner-only permissions.
 
 ## Features
 
 - AES-256-GCM encryption for stored secret payloads
-- Argon2id-based master password key derivation with HKDF key separation
 - SQLite-backed local vault storage
 - Masked secret retrieval for agent-safe responses
 - One-time token issuance for downstream automation
@@ -169,7 +167,6 @@ The safest integration path is the `vault_tool` wrapper in `src/vaultknox/hermes
 | Action | Description | Write Gate |
 |--------|-------------|------------|
 | `status` | Check vault state (initialized/unlocked/count) | No |
-| `unlock` | Unlock with master password | No |
 | `lock` | Lock vault | No |
 | `list` | List secrets (metadata only) | No |
 | `get_masked` | Get masked view + optional one-time token | No |

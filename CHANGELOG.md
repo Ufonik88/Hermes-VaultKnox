@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Configurable `strip_plaintext` mode to remove secrets from `.env` after sealing
 
 ### Changed
+- - Updated README with clear Security Model and Getting Started sections
 - - Updated README with enhanced Security Model section
   - Clear explanation of key-file-backed security model
   - Removed outdated master password references
