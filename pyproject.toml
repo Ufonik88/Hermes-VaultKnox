@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vaultknox"
-version = "0.1.0"
-description = "Encrypted secrets vault for Hermes Agent"
+version = "0.2.0"
+description = "Encrypted secrets vault + autonomous key-file-backed credentials for Hermes Agent"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -44,6 +44,7 @@ Issues = "https://github.com/Ufonik88/Hermes-VaultKnox/issues"
 
 [project.scripts]
 hermes-vault = "vaultknox.cli:main"
+hermes-secrets = "vaultknox.autonomous_secrets:cli_main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

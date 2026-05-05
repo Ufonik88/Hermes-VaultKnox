@@ -172,6 +172,83 @@ User: "Book Marble for 2 tomorrow at 7pm"
 4. Submit the form without exposing plaintext in agent logs.
 ```
 
+## Autonomous Secrets (v0.2.0)
+
+VaultKnox v0.2.0 introduces **Autonomous Secrets** — a key-file-backed encrypted
+credential store designed for automated and unattended operation.
+
+### Why Autonomous Secrets?
+
+The master-password vault requires manual unlock (typically every 15 minutes),
+which breaks cron jobs, scheduled tasks, and automated agent workflows.
+Autonomous Secrets uses a **local key file** (chmod 600) instead of a password
+prompt — scripts and cron jobs can read credentials without human intervention.
+
+### Security Model
+
+Same as SSH private keys (`~/.ssh/id_ed25519`):
+
+- The `master.key` file has owner-only permissions (chmod 600)
+- The encrypted `secrets.enc` file is safe in backups, git, and session logs
+- An attacker with root-level filesystem access can decrypt — this is the
+  accepted trade-off for full autonomy
+- The key file NEVER appears in session transcripts, memory, or tool output
+
+### Usage
+
+```bash
+# Initialize the store (one-time)
+hermes-secrets init
+
+# Add credentials
+hermes-secrets add KILOCODE_API_KEY=sk-xxx NOTION_API_KEY=secret_xxx
+
+# Retrieve a single value
+hermes-secrets get NOTION_API_KEY
+
+# List stored keys (values never shown)
+hermes-secrets list
+
+# Export as shell-safe environment variables
+eval "$(hermes-secrets env --shell)"
+echo $KILOCODE_API_KEY
+
+# Import from existing .env file
+hermes-secrets populate --from ~/.hermes/.env
+```
+
+### In Cron Jobs
+
+Simply add one line at the top of the cron prompt:
+
+```
+eval $(python3 ~/.hermes/encrypted-secrets/secrets_manager.py env)
+```
+
+Then use the API keys as environment variables as before.
+
+### Architecture
+
+```text
+~/.hermes/encrypted-secrets/
+├── master.key          # Fernet AES-256 key (chmod 600, owner-only)
+└── secrets.enc         # Encrypted JSON blob (safe for backups/git)
+
+src/vaultknox/
+├── autonomous_secrets.py  # AutonomousSecretsStore class + helpers
+└── cli.py                 # `vaultknox secrets` subcommand group
+```
+
+### CLI (via VaultKnox)
+
+```bash
+# All secrets commands also work through the main VaultKnox CLI:
+hermes-vault secrets init
+hermes-vault secrets add KEY=VALUE
+hermes-vault secrets list
+hermes-vault secrets env --shell
+```
+
 ## Release Guidance
 
 Before treating VaultKnox as broadly usable:

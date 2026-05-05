@@ -6,6 +6,7 @@ from typing import Any
 
 import click
 
+from vaultknox.autonomous_secrets import AutonomousSecretsError, AutonomousSecretsStore
 from vaultknox.branding import get_logo_asset_path, get_logo_banner
 from vaultknox.config import expand_runtime_path
 from vaultknox.vault import VaultError, VaultKnox
@@ -292,6 +293,137 @@ def bulk_import(obj: dict[str, VaultKnox], file_path: Path, file_format: str | N
         raise click.ClickException("'secrets' must be a list")
     result = vault.bulk_import_secrets(_prompt_password(), entries)
     click.echo(json.dumps(result, indent=2))
+
+
+# ---------------------------------------------------------------------------
+# Secrets (autonomous, key-file-backed) subcommand group
+# ---------------------------------------------------------------------------
+
+
+@main.group(cls=_VaultGroup)
+def secrets() -> None:
+    """
+    Manage the autonomous (key-file-backed) encrypted secrets store.
+
+    Unlike the master-password vault, this store uses a key file on disk
+    for decryption — no manual unlock needed. Designed for cron jobs,
+    scripts, and automated workflows.
+
+    \b
+    Security note: same model as SSH private keys (chmod 600 on key file).
+    The encrypted .enc file is safe for backups, git, and session transcripts.
+    """
+
+
+@secrets.command("init")
+@click.option("--force", is_flag=True, default=False, help="Re-initialize (destroys existing secrets)")
+@click.pass_obj
+def secrets_init(obj: dict, force: bool) -> None:
+    store = AutonomousSecretsStore()
+    click.echo(store.initialize(force=force))
+
+
+@secrets.command("add")
+@click.argument("pairs", nargs=-1, required=True)
+@click.pass_obj
+def secrets_add(obj: dict, pairs: tuple[str, ...]) -> None:
+    store = AutonomousSecretsStore()
+    for pair in pairs:
+        if "=" not in pair:
+            click.echo(f"Skipping '{pair}' — use KEY=VALUE format", err=True)
+            continue
+        key, value = pair.split("=", 1)
+        store.set(key.strip(), value.strip())
+        click.echo(f"  ✅ {key.strip()}")
+    click.echo(f"  Secrets saved ({len(store.list_keys())} total)")
+
+
+@secrets.command("get")
+@click.argument("key")
+@click.pass_obj
+def secrets_get(obj: dict, key: str) -> None:
+    store = AutonomousSecretsStore()
+    click.echo(store.get(key))
+
+
+@secrets.command("list")
+@click.pass_obj
+def secrets_list(obj: dict) -> None:
+    store = AutonomousSecretsStore()
+    keys = store.list_keys()
+    if not keys:
+        click.echo("  ℹ️  No secrets stored.")
+        return
+    click.echo(f"  📋 {len(keys)} secrets:")
+    for k in keys:
+        click.echo(f"     🔑 {k}")
+
+
+@secrets.command("remove")
+@click.argument("key")
+@click.pass_obj
+def secrets_remove(obj: dict, key: str) -> None:
+    store = AutonomousSecretsStore()
+    store.delete(key)
+    click.echo(f"  ✅ Removed '{key}'")
+
+
+@secrets.command("env")
+@click.option("--shell", is_flag=True, default=False, help="Output as shell-safe exports")
+@click.pass_obj
+def secrets_env(obj: dict, shell: bool) -> None:
+    store = AutonomousSecretsStore()
+    if shell:
+        click.echo(store.dump_env())
+    else:
+        click.echo(store.dump_json())
+
+
+@secrets.command("populate")
+@click.option("--from", "env_file", required=True, help="Path to .env file to import")
+@click.option("--overwrite", is_flag=True, default=False, help="Overwrite existing keys")
+@click.pass_obj
+def secrets_populate(obj: dict, env_file: str, overwrite: bool) -> None:
+    store = AutonomousSecretsStore()
+    results = store.populate_from(env_file, overwrite=overwrite)
+    for key, status in results.items():
+        click.echo(f"  {'✅' if status == 'stored' else '⏭️'}  {key}: {status}")
+    stored = sum(1 for s in results.values() if s == "stored")
+    click.echo(f"  Imported {stored} new secret(s) — {len(results)} total processed")
+
+
+# ---------------------------------------------------------------------------
+# Standalone entry point for ``hermes-secrets`` CLI
+# ---------------------------------------------------------------------------
+
+
+def secrets_main() -> None:
+    """Invoke the secrets subcommand group as a standalone CLI.
+
+    Usage::
+
+        python3 -m vaultknox.cli secrets --help
+
+    Or via the installed ``hermes-secrets`` entry point::
+
+        hermes-secrets init
+        hermes-secrets add KEY=VALUE
+        hermes-secrets env --shell
+    """
+    # Build a standalone Click group matching just the ``secrets`` subcommands.
+    # We reuse the _VaultGroup error handler from the main CLI.
+    group = _VaultGroup(
+        name="hermes-secrets",
+        help="Encrypted credential store for autonomous (key-file-backed) secrets.",
+        invoke_without_command=False,
+    )
+
+    # Register each secrets subcommand
+    for cmd in secrets.commands.values():
+        group.add_command(cmd)
+
+    # Run without the parent group context
+    group()
 
 
 if __name__ == "__main__":
