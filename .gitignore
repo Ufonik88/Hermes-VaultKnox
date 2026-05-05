@@ -17,3 +17,17 @@ htmlcov/
 *.db-wal
 *.vault
 *.log
+
+# Environment files (secrets)
+.env
+.env.*
+*.env
+
+# Encrypted secrets key file
+encrypted-secrets/master.key
+
+# IDE / OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
