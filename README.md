@@ -6,7 +6,7 @@ VaultKnox is an encrypted secrets vault designed for Hermes Agent workflows. It 
 
 ## Status
 
-VaultKnox v1.0 is stable.
+VaultKnox v0.3.0 is stable.
 
 - Intended use: local development and operator-managed Hermes environments.
 - Review the threat model before deploying in high-risk environments.
@@ -64,13 +64,26 @@ Then access credentials as environment variables.
 
 ## Key Design
 
+VaultKnox uses a layered cryptographic design to isolate each operation:
 
-- Hermes never sees plaintext secrets; it only receives masked references and one-time tokens.
-- AES-256-GCM protects stored payloads with unique random nonces.
-- Argon2id derives the master key, with HKDF used for scoped key separation.
-- SQLite stores encrypted vault data at `~/.hermes/vaultknox/secrets.db`.
-- Auto-lock defaults to 15 minutes of inactivity.
-- Audit logs are written to `~/.hermes/vaultknox/audit.log` with owner-only permissions.
+| Layer | Technology | Purpose |
+|---|---|---|
+| Key Derivation | Argon2id | Derives the master key from the master password. Memory-hard, side-channel resistant. |
+| Key Separation | HKDF-SHA256 | Derives scoped sub-keys from the master key — one per operation type (entry encryption, backup signing, token generation). |
+| Encryption | AES-256-GCM | Authenticated encryption. Each secret gets a unique random nonce; the tag guarantees integrity. |
+| Nonce Generation | `secrets.token_bytes(12)` | Cryptographically secure random nonces — no two secrets share the same nonce. |
+
+The master key never directly encrypts anything. HKDF-SHA256 derives purpose-specific sub-keys:
+
+```
+master_key
+  ├── vaultknox-entry          → encrypts/decrypts individual secrets
+  ├── vaultknox-verifier       → password correctness check
+  ├── vaultknox-backup         → encrypts vault exports
+  └── vaultknox-pre-rotation   → encrypts pre-rotation backups (v0.3.0)
+```
+
+Compromise of any sub-key does not expose the master key or any other sub-key's output.
 
 ## Features
 
@@ -82,7 +95,7 @@ Then access credentials as environment variables.
 - Audit logging with owner-only permissions and rotation
 - Hermes integration wrapper with write actions disabled by default
 
-## Threat Model
+## Security Model
 
 VaultKnox is designed to reduce the risk of:
 
@@ -342,13 +355,6 @@ hermes-vault secrets env --shell
 
 Before treating VaultKnox as broadly usable:
 
-1. Run the release checklist in [docs/release-checklist-v0.1.0.md](docs/release-checklist-v0.1.0.md).
-2. Review the Hermes write-gate operations guide.
-3. Verify no secrets or local vault files are committed.
+1. Verify no secrets or local vault files are committed.
+2. Review the [Hermes write-gate operations guide](docs/hermes-write-gate-operations.md) before enabling write access for Hermes.
 
-## Repository Contents
-
-- `src/vaultknox/`: runtime package
-- `tests/`: automated tests
-- `docs/`: operational and release documentation
-- `MASTER_TODO.md`: active project tracking and changelog

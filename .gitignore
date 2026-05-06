@@ -26,6 +26,11 @@ htmlcov/
 # Encrypted secrets key file
 encrypted-secrets/master.key
 
+# Internal planning / personal tracking (do not commit)
+MASTER_TODO.md
+VAULT_IMPROVE.md
+hermes-vaultknox-plan.md
+
 # IDE / OS
 .DS_Store
 Thumbs.db

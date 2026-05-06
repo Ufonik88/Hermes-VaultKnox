@@ -429,6 +429,387 @@ def secrets_auto_seal(obj: dict, dry_run: bool, strip: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Operational Commands: rotate, verify, scan, health, audit
+# ---------------------------------------------------------------------------
+
+
+@main.command("rotate-master-key")
+@click.pass_obj
+def rotate_master_key_cmd(obj: dict[str, VaultKnox]) -> None:
+    """
+    Rotate the vault master key atomically.
+
+    Prompts for the current password and a new password (with confirmation).
+    Creates an encrypted pre-rotation backup before rotating.
+
+    The backup is encrypted with the OLD password only — the new password
+    cannot decrypt it. This provides defence-in-depth if the new password
+    is later compromised.
+    """
+    vault = obj["vault"]
+    old_password = click.prompt("Current master password", hide_input=True)
+    new_password = click.prompt("New master password", hide_input=True, confirmation_prompt=True)
+
+    from vaultknox.rotation import rotate_master_key
+
+    result = rotate_master_key(vault.db, vault.paths.runtime_dir, old_password, new_password)
+    click.echo(json.dumps(result, indent=2))
+
+
+@main.command("verify")
+@click.option(
+    "--service",
+    type=click.Choice(["openai", "anthropic", "github", "google_oauth", "generic_bearer"]),
+    default=None,
+    help="Verify a specific service by name. Defaults to all api_key secrets.",
+)
+@click.option("--all", "verify_all", is_flag=True, default=False, help="Verify all api_key secrets.")
+@click.pass_obj
+def verify(obj: dict[str, VaultKnox], service: str | None, verify_all: bool) -> None:
+    """
+    Verify API key credentials stored in the vault against live provider endpoints.
+
+    By default verifies all 'api_key' type secrets. Use --service to verify a specific one.
+
+    Results are printed as a table with service, secret_id, and verification status.
+    """
+    from vaultknox.verifier import CredentialVerifier
+
+    verifier = CredentialVerifier()
+    vault = obj["vault"]
+
+    # Determine which secrets to verify
+    if service:
+        secrets_list = [s for s in vault.list_secrets() if s.get("service", "").lower() == service.lower()]
+        if not secrets_list:
+            click.echo(f"No secrets found for service '{service}'.")
+            return
+    elif verify_all:
+        secrets_list = [s for s in vault.list_secrets() if s.get("type") == "api_key"]
+        if not secrets_list:
+            click.echo("No 'api_key' type secrets found to verify.")
+            return
+    else:
+        secrets_list = [s for s in vault.list_secrets() if s.get("type") == "api_key"]
+        if not secrets_list:
+            click.echo("No 'api_key' type secrets found to verify.")
+            return
+
+    click.echo(f"Verifying {len(secrets_list)} credential(s)...\n")
+    password = _prompt_password()
+    for secret in secrets_list:
+        secret_id = secret.get("id", "?")
+        service_name = secret.get("service", "unknown")
+        # Get the full secret to verify
+        try:
+            full = vault.get_secret(password, secret_id)
+            payload = full.get("payload", {})
+            result = verifier.verify(payload)
+        except Exception as exc:  # noqa: BLE001
+            click.echo(f"  ❌ {service_name}/{secret_id}: error — {exc}")
+            continue
+
+        status_icon = {
+            "valid": "✅",
+            "invalid": "❌",
+            "billing_issue": "💳",
+            "network_error": "🌐",
+            "unknown": "❓",
+        }.get(result.status, "?")
+
+        click.echo(f"  {status_icon} {service_name}/{secret_id}: {result.status} — {result.message}")
+
+
+@main.command("scan")
+@click.option(
+    "--paths",
+    default=None,
+    help="Comma-separated paths to scan. Defaults to ~/.hermes and shell RC files.",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["cli", "json"], case_sensitive=False),
+    default="cli",
+    help="Output format.",
+)
+@click.pass_obj
+def scan(obj: dict[str, VaultKnox], paths: str | None, output_format: str) -> None:
+    """
+    Scan files for plaintext secrets and security issues.
+
+    Detects 21+ secret patterns (OpenAI, GitHub, AWS, Stripe, SSH keys, etc.)
+    and flags files with unsafe permissions (world-readable .env files).
+
+    Default paths: ~/.hermes, ~/.bashrc, ~/.zshrc, ~/.profile
+    """
+    from pathlib import Path
+
+    from vaultknox.scanner import SecretScanner, format_findings_cli, format_findings_json
+
+    scan_paths = [Path(p.strip()) for p in paths.split(",")] if paths else None
+    scanner = SecretScanner(paths=scan_paths) if scan_paths else SecretScanner()
+    findings, permission_issues, stats = scanner.scan()
+
+    if output_format == "json":
+        click.echo(format_findings_json(findings, permission_issues, stats))
+    else:
+        click.echo(format_findings_cli(findings, permission_issues, stats))
+
+
+@main.command("health")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["cli", "json"], case_sensitive=False),
+    default="cli",
+    help="Output format.",
+)
+@click.pass_obj
+def health(obj: dict[str, VaultKnox], output_format: str) -> None:
+    """
+    Run a full vault health check and report results.
+
+    Checks: DB permissions, audit log permissions, SQLite integrity,
+    config completeness, encryption integrity, audit log readability,
+    and autonomous secrets store health.
+
+    Exit code: 0 if healthy, 1 if degraded, 2 if critical.
+    """
+    from vaultknox.health import CheckSeverity, VaultHealthChecker
+
+    vault = obj["vault"]
+    checker = VaultHealthChecker(vault.paths, master_password=None)
+    report = checker.run_all_checks()
+
+    if output_format == "json":
+        click.echo(json.dumps(report.to_dict(), indent=2))
+        return
+
+    # Human-readable output
+    status_colors = {
+        "healthy": "✅",
+        "degraded": "⚠️ ",
+        "critical": "🔴",
+    }
+    icon = status_colors.get(report.overall_status, "?")
+    click.echo(f"\n{icon} Vault Health: {report.overall_status.upper()}\n")
+
+    for check in report.checks:
+        sev_icon = {
+            CheckSeverity.CRITICAL: "🔴",
+            CheckSeverity.WARNING: "⚠️ ",
+            CheckSeverity.INFO: "ℹ️ ",
+        }.get(check.severity, "?")
+        status_icon = "✅" if check.status.value == "pass" else "❌"
+        click.echo(f"  {sev_icon} {status_icon} {check.name}: {check.message}")
+
+    click.echo(f"\nOverall: {report.overall_status.upper()}")
+
+    # Set exit code
+    raise SystemExit(0 if report.overall_status == "healthy" else 1 if report.overall_status == "degraded" else 2)
+
+
+# ---------------------------------------------------------------------------
+# Audit log subcommand group
+# ---------------------------------------------------------------------------
+
+
+@main.group('audit')
+def audit() -> None:
+    """Audit log queries and management."""
+
+
+@audit.command("query")
+@click.option("--action", default=None, help="Filter by action name (e.g. unlock, add_secret).")
+@click.option("--status", default=None, help="Filter by status (e.g. success, failure).")
+@click.option("--secret-id", default=None, help="Filter by secret ID.")
+@click.option(
+    "--since",
+    default=None,
+    help="Only events after this datetime (ISO 8601, e.g. 2026-01-01T00:00:00+00:00 or -7d for 7 days ago).",
+)
+@click.option(
+    "--until",
+    default=None,
+    help="Only events before this datetime (ISO 8601).",
+)
+@click.option("--limit", default=None, type=int, help="Maximum number of events to return (most recent first).")
+@click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON.")
+@click.pass_obj
+def audit_query(
+    obj: dict[str, VaultKnox],
+    action: str | None,
+    status: str | None,
+    secret_id: str | None,
+    since: str | None,
+    until: str | None,
+    limit: int | None,
+    output_json: bool,
+) -> None:
+    """
+    Query the vault audit log with optional filters.
+
+    Supports filtering by action, status, secret_id, date range, and limit.
+    Results are returned newest-first by default.
+
+    Examples:
+        vaultknox audit query --action unlock --limit 20
+        vaultknox audit query --since -7d --status failure
+        vaultknox audit query --json
+    """
+    from datetime import timedelta
+
+    from vaultknox.audit import query_audit_log
+
+    vault = obj["vault"]
+
+    # Parse relative dates like -7d
+    def parse_relative(ts: str | None) -> Any:
+        if ts is None:
+            return None
+        if ts.startswith("-"):
+            # e.g. -7d → 7 days ago
+            import re
+            m = re.match(r"^-(\d+)([dhm])$", ts)
+            if m:
+                value, unit = int(m.group(1)), m.group(2)
+                delta = {"d": timedelta(days=value), "h": timedelta(hours=value), "m": timedelta(minutes=value)}[unit]
+                from datetime import datetime, timezone
+                return datetime.now(timezone.utc) - delta
+        # Treat as ISO 8601
+        from datetime import datetime, timezone
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+
+    since_dt = parse_relative(since)
+    until_dt = parse_relative(until)
+
+    events = query_audit_log(
+        vault.paths.audit_log_path,
+        action=action,
+        status=status,
+        secret_id=secret_id,
+        since=since_dt,
+        until=until_dt,
+        limit=limit,
+    )
+
+    if output_json:
+        click.echo(json.dumps(events, indent=2))
+    else:
+        if not events:
+            click.echo("No matching audit events found.")
+            return
+        for event in events:
+            ts = event.get("timestamp", "?")
+            act = event.get("action", "?")
+            stat = event.get("status", "?")
+            sid = event.get("secret_id", "")
+            detail = f" [{sid}]" if sid else ""
+            click.echo(f"  {ts}  {act}  {stat}{detail}")
+
+
+# ---------------------------------------------------------------------------
+# Expiry management subcommand group
+# ---------------------------------------------------------------------------
+
+
+@main.group('expiry')
+def expiry() -> None:
+    """Manage secret expiry dates and notifications."""
+
+
+@expiry.command("set-expiry")
+@click.argument("secret_id")
+@click.option("--days", type=int, required=True, help="Number of days until expiry.")
+@click.pass_obj
+def set_expiry(obj: dict[str, VaultKnox], secret_id: str, days: int) -> None:
+    """
+    Set or update the expiry date for a secret.
+
+    Example: vaultknox expiry set-expiry api_key_1 --days 30
+    """
+    from datetime import datetime, timezone, timedelta
+
+    vault = obj["vault"]
+    password = _prompt_password()
+    # Get existing secret to preserve type/label/payload
+    existing = vault.get_secret(password, secret_id)
+    expires_at = (datetime.now(timezone.utc) + timedelta(days=days)).replace(microsecond=0)
+    vault.update_secret(
+        password, secret_id,
+        existing.get("type", ""), existing.get("label", ""),
+        existing.get("payload", {}),
+        expires_at=expires_at.isoformat(),
+    )
+    click.echo(f"Expiry set for '{secret_id}': {expires_at.isoformat()}")
+
+
+@expiry.command("clear-expiry")
+@click.argument("secret_id")
+@click.pass_obj
+def clear_expiry(obj: dict[str, VaultKnox], secret_id: str) -> None:
+    """Remove the expiry date from a secret."""
+    vault = obj["vault"]
+    password = _prompt_password()
+    existing = vault.get_secret(password, secret_id)
+    vault.update_secret(
+        password, secret_id,
+        existing.get("type", ""), existing.get("label", ""),
+        existing.get("payload", {}),
+        expires_at=None,
+    )
+    click.echo(f"Expiry cleared for '{secret_id}'.")
+
+
+@expiry.command("notify")
+@click.pass_obj
+def expiry_notify(obj: dict[str, VaultKnox]) -> None:
+    """
+    List secrets that are expired or expiring soon.
+
+    Checks secrets with expires_at set and reports those already expired
+    or expiring within the next 7 days.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    vault = obj["vault"]
+    secrets = vault.list_secrets()
+    now = datetime.now(timezone.utc)
+    soon = now + timedelta(days=7)
+
+    expired = []
+    expiring_soon = []
+
+    for s in secrets:
+        raw = s.get("expires_at")
+        if not raw:
+            continue
+        try:
+            exp = datetime.fromisoformat(raw).astimezone(timezone.utc)
+        except ValueError:
+            continue
+        if exp <= now:
+            expired.append((s["id"], exp.isoformat()))
+        elif exp <= soon:
+            expiring_soon.append((s["id"], exp.isoformat()))
+
+    if not expired and not expiring_soon:
+        click.echo("No secrets are expired or expiring within 7 days. ✅")
+        return
+
+    if expired:
+        click.echo(f"🔴 EXPIRED ({len(expired)}):")
+        for sid, exp in expired:
+            click.echo(f"  {sid}: expired at {exp}")
+
+    if expiring_soon:
+        click.echo(f"\n⚠️  EXPIRING SOON ({len(expiring_soon)}):")
+        for sid, exp in expiring_soon:
+            click.echo(f"  {sid}: expires at {exp}")
+
+
+# ---------------------------------------------------------------------------
 # Standalone entry point for ``hermes-secrets`` CLI
 # ---------------------------------------------------------------------------
 
