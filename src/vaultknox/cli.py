@@ -6,7 +6,7 @@ from typing import Any
 
 import click
 
-from vaultknox.autonomous_secrets import AutonomousSecretsError, AutonomousSecretsStore
+from vaultknox.autonomous_secrets import AutonomousSecretsStore
 from vaultknox.branding import get_logo_asset_path, get_logo_banner
 from vaultknox.config import expand_runtime_path
 from vaultknox.vault import VaultError, VaultKnox
@@ -729,7 +729,7 @@ def set_expiry(obj: dict[str, VaultKnox], secret_id: str, days: int) -> None:
 
     Example: vaultknox expiry set-expiry api_key_1 --days 30
     """
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta, timezone
 
     vault = obj["vault"]
     password = _prompt_password()
@@ -771,7 +771,7 @@ def expiry_notify(obj: dict[str, VaultKnox]) -> None:
     Checks secrets with expires_at set and reports those already expired
     or expiring within the next 7 days.
     """
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta, timezone
 
     vault = obj["vault"]
     secrets = vault.list_secrets()
@@ -807,6 +807,211 @@ def expiry_notify(obj: dict[str, VaultKnox]) -> None:
         click.echo(f"\n⚠️  EXPIRING SOON ({len(expiring_soon)}):")
         for sid, exp in expiring_soon:
             click.echo(f"  {sid}: expires at {exp}")
+
+
+# ---------------------------------------------------------------------------
+# Sanitize History: detect and redact leaked secrets from persistent stores
+# ---------------------------------------------------------------------------
+
+
+@main.command("sanitize-history")
+@click.option("--apply", is_flag=True, default=False, help="Apply changes (default is dry-run)")
+@click.option("--paths", default=None, help="Comma-separated paths to scan. Default: sessions/, state.db, .hermes_history")
+@click.pass_obj
+def sanitize_history(obj: dict, apply: bool, paths: str | None) -> None:
+    """
+    Scan persistent stores for leaked secrets and redact them.
+
+    Checks session JSONL files, state.db messages table, and CLI history
+    for secret patterns using VaultKnox detectors. Default is dry-run.
+
+    Examples:
+        vaultknox sanitize-history           # Preview what would be redacted
+        vaultknox sanitize-history --apply   # Actually redact
+    """
+    import sqlite3
+    from pathlib import Path
+
+    from vaultknox.detectors import DETECTORS
+
+    _REDACT = "[REDACTED-SENSITIVE-VALUE]"
+    hermes_home = Path.home() / ".hermes"
+
+    default_paths = [
+        hermes_home / "sessions",
+        hermes_home / "state.db",
+        hermes_home / ".hermes_history",
+    ]
+    scan_targets = [Path(p.strip()) for p in paths.split(",")] if paths else default_paths
+
+    total_findings = 0
+    total_files_scanned = 0
+    total_files_modified = 0
+    files_modified = []
+
+    def _redact_text(text: str) -> tuple[str, int]:
+        """Redact all detector matches in text. Returns (redacted_text, count)."""
+        matches = []
+        for detector in DETECTORS:
+            for m in detector.pattern.finditer(text):
+                matches.append((m.start(), m.end()))
+        if not matches:
+            return text, 0
+        # Merge overlapping spans
+        matches.sort(key=lambda s: s[0])
+        merged = []
+        for start, end in matches:
+            if merged and start <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+            else:
+                merged.append((start, end))
+        # Replace reverse order
+        redacted = text
+        for start, end in reversed(merged):
+            redacted = redacted[:start] + _REDACT + redacted[end:]
+        return redacted, len(merged)
+
+    for target in scan_targets:
+        if not target.exists():
+            click.echo(f"  ⏭️  Skipping non-existent path: {target}")
+            continue
+
+        if target.is_dir():
+            # Scan all .jsonl files in the directory
+            for jsonl_file in sorted(target.glob("*.jsonl")):
+                total_files_scanned += 1
+                lines = jsonl_file.read_text(encoding="utf-8").splitlines()
+                modified_lines = []
+                file_findings = 0
+                changed = False
+                for line in lines:
+                    redacted, count = _redact_text(line)
+                    file_findings += count
+                    if count:
+                        changed = True
+                    modified_lines.append(redacted)
+                if changed:
+                    total_findings += file_findings
+                    total_files_modified += 1
+                    files_modified.append(str(jsonl_file))
+                    if apply:
+                        jsonl_file.write_text("\n".join(modified_lines) + "\n", encoding="utf-8")
+                        click.echo(f"  🔴 Redacted {file_findings} secret(s) in {jsonl_file.name}")
+                    else:
+                        click.echo(f"  🔍 Would redact {file_findings} secret(s) in {jsonl_file.name}")
+
+        elif target.name == "state.db":
+            total_files_scanned += 1
+            try:
+                conn = sqlite3.connect(str(target))
+                # Find all TEXT columns in all tables
+                cursor = conn.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                tables = [row[0] for row in cursor.fetchall()]
+                db_findings = 0
+                for table in tables:
+                    try:
+                        cursor.execute(f"PRAGMA table_info({table})")
+                        text_cols = [row[1] for row in cursor.fetchall() if row[2].upper() in ("TEXT", "BLOB")]
+                        for col in text_cols:
+                            cursor.execute(f"SELECT rowid, {col} FROM {table} WHERE {col} IS NOT NULL")
+                            for rowid, value in cursor.fetchall():
+                                if not isinstance(value, str) or not value:
+                                    continue
+                                redacted, count = _redact_text(value)
+                                if count:
+                                    db_findings += count
+                                    if apply:
+                                        cursor.execute(
+                                            f"UPDATE {table} SET {col} = ? WHERE rowid = ?",
+                                            (redacted, rowid),
+                                        )
+                    except Exception as exc:  # noqa: BLE001
+                        click.echo(f"  ⚠️  Table '{table}' skipped: {exc}")
+                conn.commit()
+                conn.close()
+                if db_findings:
+                    total_findings += db_findings
+                    total_files_modified += 1
+                    files_modified.append(str(target))
+                    if apply:
+                        click.echo(f"  🔴 Redacted {db_findings} secret(s) in state.db")
+                    else:
+                        click.echo(f"  🔍 Would redact {db_findings} secret(s) in state.db")
+            except Exception as exc:  # noqa: BLE001
+                click.echo(f"  ⚠️  state.db scan failed: {exc}")
+
+        elif target.name == ".hermes_history":
+            total_files_scanned += 1
+            content = target.read_text(encoding="utf-8")
+            redacted, count = _redact_text(content)
+            if count:
+                total_findings += count
+                total_files_modified += 1
+                files_modified.append(str(target))
+                if apply:
+                    target.write_text(redacted, encoding="utf-8")
+                    click.echo(f"  🔴 Redacted {count} secret(s) in .hermes_history")
+                else:
+                    click.echo(f"  🔍 Would redact {count} secret(s) in .hermes_history")
+
+    # Summary
+    mode = "APPLIED" if apply else "DRY-RUN"
+    click.echo(f"\n{'=' * 50}")
+    click.echo(f"  Mode: {mode}")
+    click.echo(f"  Files scanned: {total_files_scanned}")
+    click.echo(f"  Files with secrets: {total_files_modified}")
+    click.echo(f"  Total secret occurrences: {total_findings}")
+    if files_modified:
+        click.echo(f"  Files {'modified' if apply else 'flagged'}:")
+        for f in files_modified:
+            click.echo(f"    - {f}")
+    click.echo(f"{'=' * 50}")
+
+    if not apply and total_findings > 0:
+        click.echo(f"\n  Run with --apply to actually redact {total_findings} occurrence(s).")
+
+
+@main.command("install-hooks")
+def install_hooks() -> None:
+    """Install the secret-guard hook into ~/.hermes/hooks/.
+
+    Writes a thin wrapper handler.py and HOOK.yaml so the Hermes gateway
+    can load the secret-guard hook. The actual logic lives in the
+    vaultknox package and is imported by the wrapper.
+    """
+    from pathlib import Path
+
+    hook_dir = Path.home() / ".hermes" / "hooks" / "secret-guard"
+    hook_dir.mkdir(parents=True, exist_ok=True)
+
+    handler_path = hook_dir / "handler.py"
+    handler_source = '''\
+"""Thin wrapper for the VaultKnox secret-guard hook.
+
+This file is auto-generated by ``vaultknox install-hooks``.
+Do not edit — update the package and re-run install-hooks instead.
+"""
+
+from vaultknox.hooks.secret_guard import handle
+'''
+    handler_path.write_text(handler_source, encoding="utf-8")
+
+    yaml_path = hook_dir / "HOOK.yaml"
+    yaml_content = '''\
+name: secret-guard
+description: |
+  Detect secrets (API keys, tokens, passwords) in incoming chat messages
+  and redact them before the message reaches session storage. Uses the
+  existing VaultKnox detector registry — zero new regex to maintain.
+events:
+  - message:received
+'''
+    yaml_path.write_text(yaml_content, encoding="utf-8")
+
+    click.echo(f"  ✅ Installed secret-guard hook to {hook_dir}")
+    click.echo(f"     • {handler_path.name}")
+    click.echo(f"     • {yaml_path.name}")
 
 
 # ---------------------------------------------------------------------------

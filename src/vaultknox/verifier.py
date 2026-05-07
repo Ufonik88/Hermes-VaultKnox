@@ -10,9 +10,10 @@ Security: No secret values are logged or echoed.
 
 from __future__ import annotations
 
-import requests
 from dataclasses import dataclass
 from typing import Any, Callable
+
+import requests
 
 # Timeout for HTTP requests (seconds)
 DEFAULT_TIMEOUT = 5.0

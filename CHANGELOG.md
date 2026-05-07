@@ -5,6 +5,51 @@ All notable changes to VaultKnox are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-05-07
+
+### Added
+
+- **Chat Secret Detection & Redaction** (`src/vaultknox/detectors.py` + `src/vaultknox/hooks/secret_guard.py`)
+  - Hook logic lives in `src/vaultknox/hooks/secret_guard.py` and is installed to `~/.hermes/hooks/` via `vaultknox install-hooks`
+  - Uses the existing 21-detector registry to scan every incoming message for secrets
+  - Auto-redacts detected secrets in-place (replaces with `[REDACTED-SENSITIVE-VALUE]`)
+  - Auto-warns the user with contextual guidance when a secret is detected in chat
+  - Covers: session JSONL files, `state.db`, Mem0, CLI history, and gateway logs (when hook is installed)
+
+- **Log Sanitization Filter** (companion feature in Hermes core)
+  - `SecretSanitizationFilter` — a `logging.Filter` that redacts detector matches from all gateway log records
+  - Lives in the Hermes core repo (`gateway/logging_filters.py`); not part of the VaultKnox package
+  - Automatically attached to the `gateway` logger on startup
+  - Prevents accidental secret leakage in log files, tracebacks, and debug output
+
+- **`vaultknox sanitize-history` CLI**
+  - Scans `~/.hermes/sessions/*.jsonl`, `state.db`, and `.hermes_history` for leaked secrets
+  - Dry-run by default (`--apply` required to actually modify files)
+  - Merges overlapping detector spans before replacement to avoid corruption
+  - Shows summary: files scanned, files with secrets, total occurrences
+
+- **`vaultknox(action="scan_text")` Tool Action** (`src/vaultknox/hermes_tool.py`)
+  - Lets any agent proactively scan arbitrary text for secrets without touching the vault
+  - Returns structured findings with detector name, severity, matched text, and span positions
+  - Zero vault unlock required — pure detection
+
+- **Agent Autonomy Package** (`src/vaultknox/agent_guide/`)
+  - `TRIGGERS` — 5 built-in trigger patterns (API key paste, credential request, missing key, script writing, cron setup)
+  - `check_triggers(text)` — returns matched triggers with priority and recommended action
+  - `get_system_prompt_snippet()` — copy-paste ready system prompt block for any AI agent
+  - Public documentation: `docs/AGENT_INTEGRATION.md` — safe for GitHub (no vault internals)
+
+### Changed
+
+- `__init__.py` exports — new public symbols: `TRIGGERS`, `check_triggers`, `get_system_prompt_snippet`
+- Bumped version: `0.3.0` → `0.4.0`
+
+### Security
+
+- Secret-guard hook (installable via `vaultknox install-hooks`) redacts secrets in incoming messages before they reach session storage
+- `sanitize-history` provides a one-command cleanup for accidental chat leaks
+- No new regex patterns added — reuses the existing 21-detector registry to avoid pattern drift
+
 ## [0.3.0] — 2026-05-06
 
 ### Added

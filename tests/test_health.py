@@ -10,10 +10,8 @@ import json
 import os
 import sqlite3
 import stat
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -25,7 +23,6 @@ from vaultknox.health import (
     VaultHealthChecker,
     VaultHealthReport,
 )
-
 
 # =============================================================================
 # Fixtures
@@ -52,7 +49,7 @@ def initialized_db(temp_vault_dir: Path, mock_paths) -> tuple[Path, str]:
     Create an initialized vault database with a test verifier.
     Returns (db_path, password). No real secrets are stored.
     """
-    from vaultknox.core import derive_master_key, derive_scoped_key, encrypt_payload
+    from vaultknox.core import derive_scoped_key, encrypt_payload
 
     db_path = mock_paths.db_path
     password = "test-placeholder-password"

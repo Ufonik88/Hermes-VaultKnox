@@ -19,7 +19,6 @@ from pathlib import Path
 import pytest
 
 from vaultknox.config import expand_runtime_path
-from vaultknox.db import VaultDatabase
 from vaultknox.rotation import (
     _backup_filename,
     _create_pre_rotation_backup,
@@ -29,7 +28,6 @@ from vaultknox.rotation import (
     rotate_master_key,
 )
 from vaultknox.vault import VaultError, VaultKnox
-
 
 # Placeholder passwords (20+ chars for Argon2id compatibility)
 OLD_PASSWORD = "old-password-1234567890"
@@ -433,6 +431,7 @@ def test_backup_integrity_error_when_ciphertext_corrupted(
     # Re-write with tampered ciphertext but keep signature
     import hashlib
     import hmac
+
     from vaultknox.core import derive_master_key, derive_scoped_key
 
     old_salt = bytes.fromhex(db.get_config("argon2_salt") or "")
@@ -472,6 +471,7 @@ def test_backup_integrity_error_when_not_sqlite_format(
     # Re-sign
     import hashlib
     import hmac
+
     from vaultknox.core import derive_master_key, derive_scoped_key
 
     old_salt = bytes.fromhex(db.get_config("argon2_salt") or "")

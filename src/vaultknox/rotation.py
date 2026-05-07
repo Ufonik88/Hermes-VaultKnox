@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from vaultknox.config import PRIVATE_FILE_MODE, VaultPaths, set_private_file_permissions
+from vaultknox.config import PRIVATE_FILE_MODE, set_private_file_permissions
 from vaultknox.core import NONCE_SIZE, derive_master_key, derive_scoped_key, encrypt_payload, generate_salt
 from vaultknox.db import VaultDatabase
 from vaultknox.vault import VaultError
@@ -173,15 +173,16 @@ def rotate_master_key(
         rows = db.list_secret_rows_raw()
         decrypted_payloads: list[tuple[str, str, str, dict[str, Any], bytes, bytes, bytes]] = []
         for row in rows:
-            from vaultknox.core import decrypt_payload, EncryptedPayload
+            from vaultknox.core import EncryptedPayload, decrypt_payload
             from vaultknox.types import build_metadata
 
             payload = decrypt_payload(
                 old_entry_key,
                 EncryptedPayload(nonce=row["nonce"], ciphertext=row["data"], tag=row["tag"]),
             )
-            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
             import secrets as _secrets
+
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
             new_nonce = _secrets.token_bytes(NONCE_SIZE)
             new_ciphertext = AESGCM(new_entry_key).encrypt(

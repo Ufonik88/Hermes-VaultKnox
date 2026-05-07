@@ -4,25 +4,17 @@ from __future__ import annotations
 
 import json
 import os
-import stat
-import tempfile
-import pytest
 from pathlib import Path
 
 from vaultknox import detectors as detectors_module
 from vaultknox.scanner import (
     MAX_LINE_LENGTH,
-    SecretScanner,
     Finding,
-    PermissionIssue,
-    ScanStats,
+    SecretScanner,
     _fingerprint,
-    format_findings_cli,
-    format_findings_json,
-    check_file_permissions,
     _severity_rank,
+    check_file_permissions,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

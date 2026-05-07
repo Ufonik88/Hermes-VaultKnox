@@ -17,7 +17,6 @@ Checks performed:
 from __future__ import annotations
 
 import json
-import os
 import stat
 from dataclasses import dataclass
 from enum import Enum
@@ -26,7 +25,7 @@ from typing import Any
 
 from vaultknox.autonomous_secrets import AutonomousSecretsStore
 from vaultknox.config import PRIVATE_FILE_MODE, VaultPaths
-from vaultknox.core import decrypt_payload, derive_master_key, derive_scoped_key, EncryptedPayload
+from vaultknox.core import EncryptedPayload, decrypt_payload, derive_master_key, derive_scoped_key
 from vaultknox.db import VaultDatabase
 
 
@@ -480,7 +479,7 @@ class VaultHealthChecker:
             return HealthCheckResult(
                 name="encryption_integrity",
                 status=CheckStatus.PASS,
-                message=f"Successfully decrypted a random secret entry to verify key derivation",
+                message="Successfully decrypted a random secret entry to verify key derivation",
                 severity=CheckSeverity.INFO,
             )
         except Exception as exc:

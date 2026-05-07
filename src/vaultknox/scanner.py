@@ -17,11 +17,10 @@ from __future__ import annotations
 
 import hashlib
 import os
-import re
 import stat
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO, Iterator, NamedTuple
+from typing import Iterator, NamedTuple
 
 from vaultknox.detectors import DETECTORS, Detector
 
@@ -119,7 +118,6 @@ def check_file_permissions(path: Path) -> PermissionIssue | None:
     if mode & stat.S_IRGRP:
         # Only flag if the file's group is not the user's primary group, flag it
         try:
-            import grp
             import pwd
 
             st = path.stat()

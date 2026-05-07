@@ -6,17 +6,17 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from vaultknox.verifier import (
+    DEFAULT_TIMEOUT,
     CredentialVerifier,
     _VerificationResult,
-    _verify_openai,
     _verify_anthropic,
+    _verify_generic_bearer,
     _verify_github,
     _verify_google_oauth,
-    _verify_generic_bearer,
-    register_provider,
+    _verify_openai,
     get_provider,
     list_providers,
-    DEFAULT_TIMEOUT,
+    register_provider,
 )
 
 
