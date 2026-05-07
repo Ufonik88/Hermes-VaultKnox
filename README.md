@@ -6,7 +6,7 @@ VaultKnox is an encrypted secrets vault designed for Hermes Agent workflows. It 
 
 ## Status
 
-VaultKnox v1.0 is stable.
+VaultKnox v0.4.0 is stable.
 
 - Intended use: local development and operator-managed Hermes environments.
 - Review the threat model before deploying in high-risk environments.
@@ -64,13 +64,26 @@ Then access credentials as environment variables.
 
 ## Key Design
 
+VaultKnox uses a layered cryptographic design to isolate each operation:
 
-- Hermes never sees plaintext secrets; it only receives masked references and one-time tokens.
-- AES-256-GCM protects stored payloads with unique random nonces.
-- Argon2id derives the master key, with HKDF used for scoped key separation.
-- SQLite stores encrypted vault data at `~/.hermes/vaultknox/secrets.db`.
-- Auto-lock defaults to 15 minutes of inactivity.
-- Audit logs are written to `~/.hermes/vaultknox/audit.log` with owner-only permissions.
+| Layer | Technology | Purpose |
+|---|---|---|
+| Key Derivation | Argon2id | Derives the master key from the master password. Memory-hard, side-channel resistant. |
+| Key Separation | HKDF-SHA256 | Derives scoped sub-keys from the master key — one per operation type (entry encryption, backup signing, token generation). |
+| Encryption | AES-256-GCM | Authenticated encryption. Each secret gets a unique random nonce; the tag guarantees integrity. |
+| Nonce Generation | `secrets.token_bytes(12)` | Cryptographically secure random nonces — no two secrets share the same nonce. |
+
+The master key never directly encrypts anything. HKDF-SHA256 derives purpose-specific sub-keys:
+
+```
+master_key
+  ├── vaultknox-entry          → encrypts/decrypts individual secrets
+  ├── vaultknox-verifier       → password correctness check
+  ├── vaultknox-backup         → encrypts vault exports
+  └── vaultknox-pre-rotation   → encrypts pre-rotation backups (v0.3.0)
+```
+
+Compromise of any sub-key does not expose the master key or any other sub-key's output.
 
 ## Features
 
@@ -81,8 +94,16 @@ Then access credentials as environment variables.
 - Backup export and import with integrity signing
 - Audit logging with owner-only permissions and rotation
 - Hermes integration wrapper with write actions disabled by default
+- **v0.4.0** — 21 built-in secret detectors for chat and file scanning
+- **v0.4.0** — Proactive `scan_text` tool action for runtime secret detection
+- **v0.4.0** — Secret-guard hook for automatic chat message redaction
+- **v0.4.0** — `sanitize-history` CLI for cleaning leaked secrets from persistent stores
+- **v0.4.0** — Agent autonomy package with trigger patterns and system prompt snippets
+- **v0.4.0** — Health checks, credential verification, and master-key rotation
+- **v0.2.0** — Autonomous Secrets (key-file-backed, password-free) for cron jobs and scripts
+- **v0.2.0** — Auto-seal to detect and encrypt new credentials automatically
 
-## Threat Model
+## Security Model
 
 VaultKnox is designed to reduce the risk of:
 
@@ -171,6 +192,9 @@ The safest integration path is the `vault_tool` wrapper in `src/vaultknox/hermes
 | `list` | List secrets (metadata only) | No |
 | `get_masked` | Get masked view + optional one-time token | No |
 | `get_token` | Issue single-use token for automation | No |
+| `inject_env` | Inject a secret into an environment variable | Yes |
+| `consume_token` | Exchange a one-time token for plaintext | No |
+| `scan_text` | Scan arbitrary text for secrets using 21 detectors | No |
 | `add` | Add new secret | Yes |
 | `update` | Update existing secret | Yes |
 | `delete` | Remove secret | Yes |
@@ -199,15 +223,30 @@ Read the operator guidance in [docs/hermes-write-gate-operations.md](docs/hermes
 
 ```text
 src/vaultknox/
-├── __init__.py      # Exports VaultKnox, VaultError, vault_tool
-├── vault.py         # Main VaultKnox class and service logic
-├── core.py          # Encryption, decryption, KDF, token generation
-├── db.py            # SQLite operations
-├── types.py         # Secret validation and masked views
-├── audit.py         # Audit logging
-├── session.py       # Session state management
-├── config.py        # Paths and defaults
-└── cli.py           # Click entry point
+├── __init__.py              # Exports VaultKnox, VaultError, vault_tool, triggers, scanner
+├── vault.py                 # Main VaultKnox class and service logic
+├── core.py                  # Encryption, decryption, KDF, token generation
+├── db.py                    # SQLite operations
+├── types.py                 # Secret validation and masked views
+├── audit.py                 # Audit logging with query support
+├── session.py               # Session state management
+├── config.py                # Paths and defaults
+├── cli.py                   # Click entry point (vault + secrets + audit + expiry + ops)
+├── hermes_tool.py           # Hermes `vaultknox` tool wrapper (includes scan_text)
+├── detectors.py             # 21 built-in secret detector patterns
+├── scanner.py               # File scanner for plaintext secrets and permission issues
+├── agent_guide/             # Agent autonomy package (triggers + system prompts)
+│   ├── __init__.py
+│   ├── triggers.py          # Context-based trigger detection
+│   └── prompts.py           # Safe system-prompt snippets for agents
+├── hooks/                   # Hermes gateway hook implementations
+│   ├── __init__.py
+│   └── secret_guard.py      # Chat message secret redaction hook
+├── rotation.py              # Master key rotation with pre-rotation backup
+├── verifier.py              # Live credential verification against provider APIs
+├── health.py                # Vault health checks (DB, permissions, integrity)
+├── autonomous_secrets.py    # Key-file-backed autonomous secrets store
+└── branding.py              # Logo and CLI banner assets
 ```
 
 ## Booking Flow Example
@@ -338,17 +377,110 @@ hermes-vault secrets list
 hermes-vault secrets env --shell
 ```
 
+## Chat Secret Detection & Agent Autonomy (v0.4.0)
+
+VaultKnox v0.4.0 introduces **chat secret detection** and an **agent autonomy package**
+to prevent secrets from leaking into chat logs, session storage, and agent memory.
+
+### 21 Built-In Secret Detectors
+
+VaultKnox ships with 21 regex-based detectors covering the most common secret types:
+
+| Category | Detectors |
+|---|---|
+| **Critical** | OpenAI API Key, GitHub PAT (classic, fine-grained, OAuth, impersonation, refresh), Anthropic API Key, AWS Access Key ID, AWS Secret Access Key, Slack Token, Stripe Secret Key, Twilio API Key, SendGrid API Key, NPM Access Token, RSA/DSA/EC Private Keys |
+| **High** | Generic API Key Pattern, Generic Secret Key Pattern, Generic Access Token Pattern, Generic Auth Token Pattern, Generic Secret Variable Pattern, Bearer Token |
+| **Medium** | Generic Password Pattern in Config, Stripe Publishable Key |
+
+All patterns live in `src/vaultknox/detectors.py`. Adding a new detector is a
+single `_register()` call — no scanner logic changes required.
+
+### Proactive Scanning with `scan_text`
+
+Hermes can scan arbitrary text for secrets at runtime using the `vaultknox` tool:
+
+```python
+vaultknox(action="scan_text", text="Here is my key: sk-abc123...")
+```
+
+Returns a structured list of findings with detector name, severity, matched text,
+and character span — useful for sanitising user input before logging it.
+
+### File Scanning
+
+Scan the filesystem for plaintext secrets and permission issues:
+
+```bash
+vaultknox scan                          # Default paths
+vaultknox scan --paths /path/to/repo    # Custom paths
+vaultknox scan --format json            # Machine-readable output
+```
+
+The scanner checks:
+- 21 secret patterns across `.env`, `.json`, `.yaml`, `.yml`, `.sh`, `.bashrc`, `.zshrc`, `.profile`
+- Duplicate secrets across files
+- World-readable and group-readable secret files
+
+### Secret-Guard Hook: `vaultknox install-hooks`
+
+Deploy a Hermes gateway hook that automatically redacts secrets from incoming
+chat messages **before** they hit session storage:
+
+```bash
+vaultknox install-hooks
+```
+
+This writes `~/.hermes/hooks/secret-guard/` with:
+- `handler.py` — thin wrapper importing `vaultknox.hooks.secret_guard`
+- `HOOK.yaml` — event registration (`message:received`)
+
+Detected secrets are replaced with `[REDACTED-SENSITIVE-VALUE]` in-place.
+
+### Sanitize History: `vaultknox sanitize-history`
+
+If a secret was accidentally pasted into chat, clean it up from persistent stores:
+
+```bash
+vaultknox sanitize-history              # Dry-run preview
+vaultknox sanitize-history --apply      # Actually redact
+```
+
+Scans and redacts:
+- `~/.hermes/sessions/*.jsonl`
+- `~/.hermes/state.db` (all TEXT/BLOB columns)
+- `~/.hermes/.hermes_history`
+
+### Agent Autonomy Package (`agent_guide/`)
+
+The `agent_guide/` module gives AI agents context-aware guidance without leaking
+encryption internals.
+
+**Trigger detection** (`check_triggers`) — keyword + context heuristics for:
+- `user_pastes_secret` — warn and suggest vault storage
+- `user_asks_store_key` — guide to CLI or tool workflow
+- `agent_needs_api_key` — check vault before asking user
+- `script_needs_secret` — inject vault-loading patterns, never hardcode
+- `cron_job_needs_auth` — recommend AutonomousSecretsStore
+
+**System prompt snippet** (`get_system_prompt_snippet`) — a safe markdown block
+you can inject into any agent's system prompt. Contains no file paths, no master
+password mechanics — just behavioural rules.
+
+### Other v0.4.0 Operations
+
+| Command | Purpose |
+|---|---|
+| `vaultknox health` | Full vault health check (DB integrity, permissions, encryption, autonomous store) |
+| `vaultknox verify` | Live credential verification against provider APIs (OpenAI, Anthropic, GitHub, etc.) |
+| `vaultknox rotate-master-key` | Atomic master-key rotation with pre-rotation backup |
+| `vaultknox audit query` | Query audit log with filters (action, status, date range) |
+| `vaultknox expiry set-expiry <id> --days 30` | Set secret expiration |
+| `vaultknox expiry notify` | List expired or soon-to-expire secrets |
+
 ## Release Guidance
 
 Before treating VaultKnox as broadly usable:
 
-1. Run the release checklist in [docs/release-checklist-v0.1.0.md](docs/release-checklist-v0.1.0.md).
-2. Review the Hermes write-gate operations guide.
-3. Verify no secrets or local vault files are committed.
+1. Verify no secrets or local vault files are committed.
+2. Review the [Hermes write-gate operations guide](docs/hermes-write-gate-operations.md) before enabling write access for Hermes.
 
-## Repository Contents
-
-- `src/vaultknox/`: runtime package
-- `tests/`: automated tests
-- `docs/`: operational and release documentation
-- `MASTER_TODO.md`: active project tracking and changelog

@@ -5,6 +5,112 @@ All notable changes to VaultKnox are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-05-07
+
+### Added
+
+- **Chat Secret Detection & Redaction** (`src/vaultknox/detectors.py` + `src/vaultknox/hooks/secret_guard.py`)
+  - Hook logic lives in `src/vaultknox/hooks/secret_guard.py` and is installed to `~/.hermes/hooks/` via `vaultknox install-hooks`
+  - Uses the existing 21-detector registry to scan every incoming message for secrets
+  - Auto-redacts detected secrets in-place (replaces with `[REDACTED-SENSITIVE-VALUE]`)
+  - Auto-warns the user with contextual guidance when a secret is detected in chat
+  - Covers: session JSONL files, `state.db`, Mem0, CLI history, and gateway logs (when hook is installed)
+
+- **Log Sanitization Filter** (companion feature in Hermes core)
+  - `SecretSanitizationFilter` — a `logging.Filter` that redacts detector matches from all gateway log records
+  - Lives in the Hermes core repo (`gateway/logging_filters.py`); not part of the VaultKnox package
+  - Automatically attached to the `gateway` logger on startup
+  - Prevents accidental secret leakage in log files, tracebacks, and debug output
+
+- **`vaultknox sanitize-history` CLI**
+  - Scans `~/.hermes/sessions/*.jsonl`, `state.db`, and `.hermes_history` for leaked secrets
+  - Dry-run by default (`--apply` required to actually modify files)
+  - Merges overlapping detector spans before replacement to avoid corruption
+  - Shows summary: files scanned, files with secrets, total occurrences
+
+- **`vaultknox(action="scan_text")` Tool Action** (`src/vaultknox/hermes_tool.py`)
+  - Lets any agent proactively scan arbitrary text for secrets without touching the vault
+  - Returns structured findings with detector name, severity, matched text, and span positions
+  - Zero vault unlock required — pure detection
+
+- **Agent Autonomy Package** (`src/vaultknox/agent_guide/`)
+  - `TRIGGERS` — 5 built-in trigger patterns (API key paste, credential request, missing key, script writing, cron setup)
+  - `check_triggers(text)` — returns matched triggers with priority and recommended action
+  - `get_system_prompt_snippet()` — copy-paste ready system prompt block for any AI agent
+  - Public documentation: `docs/AGENT_INTEGRATION.md` — safe for GitHub (no vault internals)
+
+### Changed
+
+- `__init__.py` exports — new public symbols: `TRIGGERS`, `check_triggers`, `get_system_prompt_snippet`
+- Bumped version: `0.3.0` → `0.4.0`
+
+### Security
+
+- Secret-guard hook (installable via `vaultknox install-hooks`) redacts secrets in incoming messages before they reach session storage
+- `sanitize-history` provides a one-command cleanup for accidental chat leaks
+- No new regex patterns added — reuses the existing 21-detector registry to avoid pattern drift
+
+## [0.3.0] — 2026-05-06
+
+### Added
+
+- **Master Key Rotation** (`src/vaultknox/rotation.py`)
+  - `vaultknox rotate-master-key` — Atomically rotate the vault master password
+  - Pre-rotation encrypted backup: backup is encrypted with the OLD password only, so the new password cannot decrypt it (defence-in-depth)
+  - HMAC-SHA256 integrity signature on every backup
+  - Single SQLite transaction for all re-encryption — vault is never in a partially-updated state
+  - Automatic rollback on failure: restores from the pre-rotation backup automatically
+  - `list_pre_rotation_backups()` and `delete_pre_rotation_backup()` helpers for manual cleanup
+
+- **Live Credential Verification** (`src/vaultknox/verifier.py`)
+  - `vaultknox verify [--service openai|anthropic|github|google_oauth] [--all]`
+  - Validates API keys stored in the vault against live provider endpoints
+  - Supports: OpenAI, Anthropic, GitHub, Google OAuth, Generic Bearer tokens
+  - Returns structured status: `valid`, `invalid`, `billing_issue`, `network_error`, `unknown`
+  - 5-second default timeout, 10-second maximum
+  - API keys are never logged or echoed
+
+- **Secret Scanner** (`src/vaultknox/scanner.py` + `src/vaultknox/detectors.py`)
+  - `vaultknox scan [--paths /path/a,/path/b] [--format json|cli]`
+  - Scans files for 21+ plaintext secret patterns: OpenAI, GitHub (6 types), Anthropic, AWS, Stripe, Twilio, SendGrid, NPM, RSA keys, and generic patterns
+  - Flags files with unsafe permissions (world-readable `.env` and `.json` files)
+  - Detects duplicate secrets across files via SHA-256 fingerprinting
+  - Large file protection: 5 MB hard cap, 100 KB line limit
+  - Skips `node_modules`, `.git`, `__pycache__`, `.pytest_cache`
+  - Output as emoji table (CLI) or structured JSON
+
+- **Vault Health Check** (`src/vaultknox/health.py`)
+  - `vaultknox health [--format json|cli]`
+  - Checks: DB permissions (0o600), audit log permissions, SQLite integrity (`PRAGMA integrity_check`), vault config completeness, encryption integrity (sample decrypt), audit log readability
+  - Reports overall status: `healthy`, `degraded`, or `critical`
+  - Exit codes: 0 (healthy), 1 (degraded), 2 (critical)
+
+- **Audit Log Query CLI** (`src/vaultknox/audit.py`)
+  - `vaultknox audit query [--action X] [--status success|failure] [--secret-id X] [--since -7d] [--until ISO] [--limit N] [--json]`
+  - Filter by action, status, secret ID, and date range (supports relative dates like `-7d`, `-24h`)
+  - Reads from main audit log and rotated backups (newest-first)
+  - JSON output for scripting
+
+- **Expiry Management** (`src/vaultknox/expiry.py`)
+  - `vaultknox expiry set-expiry <id> --days 30` — Set expiry on a secret
+  - `vaultknox expiry clear-expiry <id>` — Remove expiry from a secret
+  - `vaultknox expiry notify` — Report expired and expiring-within-7-days secrets
+  - `vaultknox list --expired` — Show only expired secrets
+
+- **`__init__.py` exports** — New public symbols available for import:
+  - `rotate_master_key`, `SecretScanner`, `CredentialVerifier`, `VaultHealthChecker`
+
+### Changed
+
+- Updated README with full v0.3.0 feature documentation
+- Bumped version: `0.2.0` → `0.3.0`
+
+### Security
+
+- Pre-rotation backup encrypted with OLD password only — provides defence-in-depth against new password compromise
+- All backups HMAC-SHA256 signed and chmod 600
+- API keys never appear in scanner output, logs, or terminal echo
+
 ## [0.2.0] — 2026-05-05
 
 ### Added
@@ -43,13 +149,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Configurable `strip_plaintext` mode to remove secrets from `.env` after sealing
 
 ### Changed
-- - Updated README with clear Security Model and Getting Started sections
-- - Updated README with enhanced Security Model section
+- Updated README with clear Security Model and Getting Started sections
   - Clear explanation of key-file-backed security model
   - Removed outdated master password references
   - Added prominent Getting Started example
   - Documented encrypted-secrets directory structure
-
 - Bumped version: `0.1.0` → `0.2.0`
 - Updated project description to reflect dual-vault architecture
 - Updated README with full autonomous secrets documentation

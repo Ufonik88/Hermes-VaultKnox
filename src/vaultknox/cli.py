@@ -6,7 +6,7 @@ from typing import Any
 
 import click
 
-from vaultknox.autonomous_secrets import AutonomousSecretsError, AutonomousSecretsStore
+from vaultknox.autonomous_secrets import AutonomousSecretsStore
 from vaultknox.branding import get_logo_asset_path, get_logo_banner
 from vaultknox.config import expand_runtime_path
 from vaultknox.vault import VaultError, VaultKnox
@@ -426,6 +426,592 @@ def secrets_auto_seal(obj: dict, dry_run: bool, strip: bool) -> None:
 
     total = len(results["encrypted"])
     click.echo(f"\n  {'🔮 Would encrypt' if dry_run else '🔐 Auto-sealed'} {total} new credential(s)")
+
+
+# ---------------------------------------------------------------------------
+# Operational Commands: rotate, verify, scan, health, audit
+# ---------------------------------------------------------------------------
+
+
+@main.command("rotate-master-key")
+@click.pass_obj
+def rotate_master_key_cmd(obj: dict[str, VaultKnox]) -> None:
+    """
+    Rotate the vault master key atomically.
+
+    Prompts for the current password and a new password (with confirmation).
+    Creates an encrypted pre-rotation backup before rotating.
+
+    The backup is encrypted with the OLD password only — the new password
+    cannot decrypt it. This provides defence-in-depth if the new password
+    is later compromised.
+    """
+    vault = obj["vault"]
+    old_password = click.prompt("Current master password", hide_input=True)
+    new_password = click.prompt("New master password", hide_input=True, confirmation_prompt=True)
+
+    from vaultknox.rotation import rotate_master_key
+
+    result = rotate_master_key(vault.db, vault.paths.runtime_dir, old_password, new_password)
+    click.echo(json.dumps(result, indent=2))
+
+
+@main.command("verify")
+@click.option(
+    "--service",
+    type=click.Choice(["openai", "anthropic", "github", "google_oauth", "generic_bearer"]),
+    default=None,
+    help="Verify a specific service by name. Defaults to all api_key secrets.",
+)
+@click.option("--all", "verify_all", is_flag=True, default=False, help="Verify all api_key secrets.")
+@click.pass_obj
+def verify(obj: dict[str, VaultKnox], service: str | None, verify_all: bool) -> None:
+    """
+    Verify API key credentials stored in the vault against live provider endpoints.
+
+    By default verifies all 'api_key' type secrets. Use --service to verify a specific one.
+
+    Results are printed as a table with service, secret_id, and verification status.
+    """
+    from vaultknox.verifier import CredentialVerifier
+
+    verifier = CredentialVerifier()
+    vault = obj["vault"]
+
+    # Determine which secrets to verify
+    if service:
+        secrets_list = [s for s in vault.list_secrets() if s.get("service", "").lower() == service.lower()]
+        if not secrets_list:
+            click.echo(f"No secrets found for service '{service}'.")
+            return
+    elif verify_all:
+        secrets_list = [s for s in vault.list_secrets() if s.get("type") == "api_key"]
+        if not secrets_list:
+            click.echo("No 'api_key' type secrets found to verify.")
+            return
+    else:
+        secrets_list = [s for s in vault.list_secrets() if s.get("type") == "api_key"]
+        if not secrets_list:
+            click.echo("No 'api_key' type secrets found to verify.")
+            return
+
+    click.echo(f"Verifying {len(secrets_list)} credential(s)...\n")
+    password = _prompt_password()
+    for secret in secrets_list:
+        secret_id = secret.get("id", "?")
+        service_name = secret.get("service", "unknown")
+        # Get the full secret to verify
+        try:
+            full = vault.get_secret(password, secret_id)
+            payload = full.get("payload", {})
+            result = verifier.verify(payload)
+        except Exception as exc:  # noqa: BLE001
+            click.echo(f"  ❌ {service_name}/{secret_id}: error — {exc}")
+            continue
+
+        status_icon = {
+            "valid": "✅",
+            "invalid": "❌",
+            "billing_issue": "💳",
+            "network_error": "🌐",
+            "unknown": "❓",
+        }.get(result.status, "?")
+
+        click.echo(f"  {status_icon} {service_name}/{secret_id}: {result.status} — {result.message}")
+
+
+@main.command("scan")
+@click.option(
+    "--paths",
+    default=None,
+    help="Comma-separated paths to scan. Defaults to ~/.hermes and shell RC files.",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["cli", "json"], case_sensitive=False),
+    default="cli",
+    help="Output format.",
+)
+@click.pass_obj
+def scan(obj: dict[str, VaultKnox], paths: str | None, output_format: str) -> None:
+    """
+    Scan files for plaintext secrets and security issues.
+
+    Detects 21+ secret patterns (OpenAI, GitHub, AWS, Stripe, SSH keys, etc.)
+    and flags files with unsafe permissions (world-readable .env files).
+
+    Default paths: ~/.hermes, ~/.bashrc, ~/.zshrc, ~/.profile
+    """
+    from pathlib import Path
+
+    from vaultknox.scanner import SecretScanner, format_findings_cli, format_findings_json
+
+    scan_paths = [Path(p.strip()) for p in paths.split(",")] if paths else None
+    scanner = SecretScanner(paths=scan_paths) if scan_paths else SecretScanner()
+    findings, permission_issues, stats = scanner.scan()
+
+    if output_format == "json":
+        click.echo(format_findings_json(findings, permission_issues, stats))
+    else:
+        click.echo(format_findings_cli(findings, permission_issues, stats))
+
+
+@main.command("health")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["cli", "json"], case_sensitive=False),
+    default="cli",
+    help="Output format.",
+)
+@click.pass_obj
+def health(obj: dict[str, VaultKnox], output_format: str) -> None:
+    """
+    Run a full vault health check and report results.
+
+    Checks: DB permissions, audit log permissions, SQLite integrity,
+    config completeness, encryption integrity, audit log readability,
+    and autonomous secrets store health.
+
+    Exit code: 0 if healthy, 1 if degraded, 2 if critical.
+    """
+    from vaultknox.health import CheckSeverity, VaultHealthChecker
+
+    vault = obj["vault"]
+    checker = VaultHealthChecker(vault.paths, master_password=None)
+    report = checker.run_all_checks()
+
+    if output_format == "json":
+        click.echo(json.dumps(report.to_dict(), indent=2))
+        return
+
+    # Human-readable output
+    status_colors = {
+        "healthy": "✅",
+        "degraded": "⚠️ ",
+        "critical": "🔴",
+    }
+    icon = status_colors.get(report.overall_status, "?")
+    click.echo(f"\n{icon} Vault Health: {report.overall_status.upper()}\n")
+
+    for check in report.checks:
+        sev_icon = {
+            CheckSeverity.CRITICAL: "🔴",
+            CheckSeverity.WARNING: "⚠️ ",
+            CheckSeverity.INFO: "ℹ️ ",
+        }.get(check.severity, "?")
+        status_icon = "✅" if check.status.value == "pass" else "❌"
+        click.echo(f"  {sev_icon} {status_icon} {check.name}: {check.message}")
+
+    click.echo(f"\nOverall: {report.overall_status.upper()}")
+
+    # Set exit code
+    raise SystemExit(0 if report.overall_status == "healthy" else 1 if report.overall_status == "degraded" else 2)
+
+
+# ---------------------------------------------------------------------------
+# Audit log subcommand group
+# ---------------------------------------------------------------------------
+
+
+@main.group('audit')
+def audit() -> None:
+    """Audit log queries and management."""
+
+
+@audit.command("query")
+@click.option("--action", default=None, help="Filter by action name (e.g. unlock, add_secret).")
+@click.option("--status", default=None, help="Filter by status (e.g. success, failure).")
+@click.option("--secret-id", default=None, help="Filter by secret ID.")
+@click.option(
+    "--since",
+    default=None,
+    help="Only events after this datetime (ISO 8601, e.g. 2026-01-01T00:00:00+00:00 or -7d for 7 days ago).",
+)
+@click.option(
+    "--until",
+    default=None,
+    help="Only events before this datetime (ISO 8601).",
+)
+@click.option("--limit", default=None, type=int, help="Maximum number of events to return (most recent first).")
+@click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON.")
+@click.pass_obj
+def audit_query(
+    obj: dict[str, VaultKnox],
+    action: str | None,
+    status: str | None,
+    secret_id: str | None,
+    since: str | None,
+    until: str | None,
+    limit: int | None,
+    output_json: bool,
+) -> None:
+    """
+    Query the vault audit log with optional filters.
+
+    Supports filtering by action, status, secret_id, date range, and limit.
+    Results are returned newest-first by default.
+
+    Examples:
+        vaultknox audit query --action unlock --limit 20
+        vaultknox audit query --since -7d --status failure
+        vaultknox audit query --json
+    """
+    from datetime import timedelta
+
+    from vaultknox.audit import query_audit_log
+
+    vault = obj["vault"]
+
+    # Parse relative dates like -7d
+    def parse_relative(ts: str | None) -> Any:
+        if ts is None:
+            return None
+        if ts.startswith("-"):
+            # e.g. -7d → 7 days ago
+            import re
+            m = re.match(r"^-(\d+)([dhm])$", ts)
+            if m:
+                value, unit = int(m.group(1)), m.group(2)
+                delta = {"d": timedelta(days=value), "h": timedelta(hours=value), "m": timedelta(minutes=value)}[unit]
+                from datetime import datetime, timezone
+                return datetime.now(timezone.utc) - delta
+        # Treat as ISO 8601
+        from datetime import datetime, timezone
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+
+    since_dt = parse_relative(since)
+    until_dt = parse_relative(until)
+
+    events = query_audit_log(
+        vault.paths.audit_log_path,
+        action=action,
+        status=status,
+        secret_id=secret_id,
+        since=since_dt,
+        until=until_dt,
+        limit=limit,
+    )
+
+    if output_json:
+        click.echo(json.dumps(events, indent=2))
+    else:
+        if not events:
+            click.echo("No matching audit events found.")
+            return
+        for event in events:
+            ts = event.get("timestamp", "?")
+            act = event.get("action", "?")
+            stat = event.get("status", "?")
+            sid = event.get("secret_id", "")
+            detail = f" [{sid}]" if sid else ""
+            click.echo(f"  {ts}  {act}  {stat}{detail}")
+
+
+# ---------------------------------------------------------------------------
+# Expiry management subcommand group
+# ---------------------------------------------------------------------------
+
+
+@main.group('expiry')
+def expiry() -> None:
+    """Manage secret expiry dates and notifications."""
+
+
+@expiry.command("set-expiry")
+@click.argument("secret_id")
+@click.option("--days", type=int, required=True, help="Number of days until expiry.")
+@click.pass_obj
+def set_expiry(obj: dict[str, VaultKnox], secret_id: str, days: int) -> None:
+    """
+    Set or update the expiry date for a secret.
+
+    Example: vaultknox expiry set-expiry api_key_1 --days 30
+    """
+    from datetime import datetime, timedelta, timezone
+
+    vault = obj["vault"]
+    password = _prompt_password()
+    # Get existing secret to preserve type/label/payload
+    existing = vault.get_secret(password, secret_id)
+    expires_at = (datetime.now(timezone.utc) + timedelta(days=days)).replace(microsecond=0)
+    vault.update_secret(
+        password, secret_id,
+        existing.get("type", ""), existing.get("label", ""),
+        existing.get("payload", {}),
+        expires_at=expires_at.isoformat(),
+    )
+    click.echo(f"Expiry set for '{secret_id}': {expires_at.isoformat()}")
+
+
+@expiry.command("clear-expiry")
+@click.argument("secret_id")
+@click.pass_obj
+def clear_expiry(obj: dict[str, VaultKnox], secret_id: str) -> None:
+    """Remove the expiry date from a secret."""
+    vault = obj["vault"]
+    password = _prompt_password()
+    existing = vault.get_secret(password, secret_id)
+    vault.update_secret(
+        password, secret_id,
+        existing.get("type", ""), existing.get("label", ""),
+        existing.get("payload", {}),
+        expires_at=None,
+    )
+    click.echo(f"Expiry cleared for '{secret_id}'.")
+
+
+@expiry.command("notify")
+@click.pass_obj
+def expiry_notify(obj: dict[str, VaultKnox]) -> None:
+    """
+    List secrets that are expired or expiring soon.
+
+    Checks secrets with expires_at set and reports those already expired
+    or expiring within the next 7 days.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    vault = obj["vault"]
+    secrets = vault.list_secrets()
+    now = datetime.now(timezone.utc)
+    soon = now + timedelta(days=7)
+
+    expired = []
+    expiring_soon = []
+
+    for s in secrets:
+        raw = s.get("expires_at")
+        if not raw:
+            continue
+        try:
+            exp = datetime.fromisoformat(raw).astimezone(timezone.utc)
+        except ValueError:
+            continue
+        if exp <= now:
+            expired.append((s["id"], exp.isoformat()))
+        elif exp <= soon:
+            expiring_soon.append((s["id"], exp.isoformat()))
+
+    if not expired and not expiring_soon:
+        click.echo("No secrets are expired or expiring within 7 days. ✅")
+        return
+
+    if expired:
+        click.echo(f"🔴 EXPIRED ({len(expired)}):")
+        for sid, exp in expired:
+            click.echo(f"  {sid}: expired at {exp}")
+
+    if expiring_soon:
+        click.echo(f"\n⚠️  EXPIRING SOON ({len(expiring_soon)}):")
+        for sid, exp in expiring_soon:
+            click.echo(f"  {sid}: expires at {exp}")
+
+
+# ---------------------------------------------------------------------------
+# Sanitize History: detect and redact leaked secrets from persistent stores
+# ---------------------------------------------------------------------------
+
+
+@main.command("sanitize-history")
+@click.option("--apply", is_flag=True, default=False, help="Apply changes (default is dry-run)")
+@click.option("--paths", default=None, help="Comma-separated paths to scan. Default: sessions/, state.db, .hermes_history")
+@click.pass_obj
+def sanitize_history(obj: dict, apply: bool, paths: str | None) -> None:
+    """
+    Scan persistent stores for leaked secrets and redact them.
+
+    Checks session JSONL files, state.db messages table, and CLI history
+    for secret patterns using VaultKnox detectors. Default is dry-run.
+
+    Examples:
+        vaultknox sanitize-history           # Preview what would be redacted
+        vaultknox sanitize-history --apply   # Actually redact
+    """
+    import sqlite3
+    from pathlib import Path
+
+    from vaultknox.detectors import DETECTORS
+
+    _REDACT = "[REDACTED-SENSITIVE-VALUE]"
+    hermes_home = Path.home() / ".hermes"
+
+    default_paths = [
+        hermes_home / "sessions",
+        hermes_home / "state.db",
+        hermes_home / ".hermes_history",
+    ]
+    scan_targets = [Path(p.strip()) for p in paths.split(",")] if paths else default_paths
+
+    total_findings = 0
+    total_files_scanned = 0
+    total_files_modified = 0
+    files_modified = []
+
+    def _redact_text(text: str) -> tuple[str, int]:
+        """Redact all detector matches in text. Returns (redacted_text, count)."""
+        matches = []
+        for detector in DETECTORS:
+            for m in detector.pattern.finditer(text):
+                matches.append((m.start(), m.end()))
+        if not matches:
+            return text, 0
+        # Merge overlapping spans
+        matches.sort(key=lambda s: s[0])
+        merged = []
+        for start, end in matches:
+            if merged and start <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+            else:
+                merged.append((start, end))
+        # Replace reverse order
+        redacted = text
+        for start, end in reversed(merged):
+            redacted = redacted[:start] + _REDACT + redacted[end:]
+        return redacted, len(merged)
+
+    for target in scan_targets:
+        if not target.exists():
+            click.echo(f"  ⏭️  Skipping non-existent path: {target}")
+            continue
+
+        if target.is_dir():
+            # Scan all .jsonl files in the directory
+            for jsonl_file in sorted(target.glob("*.jsonl")):
+                total_files_scanned += 1
+                lines = jsonl_file.read_text(encoding="utf-8").splitlines()
+                modified_lines = []
+                file_findings = 0
+                changed = False
+                for line in lines:
+                    redacted, count = _redact_text(line)
+                    file_findings += count
+                    if count:
+                        changed = True
+                    modified_lines.append(redacted)
+                if changed:
+                    total_findings += file_findings
+                    total_files_modified += 1
+                    files_modified.append(str(jsonl_file))
+                    if apply:
+                        jsonl_file.write_text("\n".join(modified_lines) + "\n", encoding="utf-8")
+                        click.echo(f"  🔴 Redacted {file_findings} secret(s) in {jsonl_file.name}")
+                    else:
+                        click.echo(f"  🔍 Would redact {file_findings} secret(s) in {jsonl_file.name}")
+
+        elif target.name == "state.db":
+            total_files_scanned += 1
+            try:
+                conn = sqlite3.connect(str(target))
+                # Find all TEXT columns in all tables
+                cursor = conn.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                tables = [row[0] for row in cursor.fetchall()]
+                db_findings = 0
+                for table in tables:
+                    try:
+                        cursor.execute(f"PRAGMA table_info({table})")
+                        text_cols = [row[1] for row in cursor.fetchall() if row[2].upper() in ("TEXT", "BLOB")]
+                        for col in text_cols:
+                            cursor.execute(f"SELECT rowid, {col} FROM {table} WHERE {col} IS NOT NULL")
+                            for rowid, value in cursor.fetchall():
+                                if not isinstance(value, str) or not value:
+                                    continue
+                                redacted, count = _redact_text(value)
+                                if count:
+                                    db_findings += count
+                                    if apply:
+                                        cursor.execute(
+                                            f"UPDATE {table} SET {col} = ? WHERE rowid = ?",
+                                            (redacted, rowid),
+                                        )
+                    except Exception as exc:  # noqa: BLE001
+                        click.echo(f"  ⚠️  Table '{table}' skipped: {exc}")
+                conn.commit()
+                conn.close()
+                if db_findings:
+                    total_findings += db_findings
+                    total_files_modified += 1
+                    files_modified.append(str(target))
+                    if apply:
+                        click.echo(f"  🔴 Redacted {db_findings} secret(s) in state.db")
+                    else:
+                        click.echo(f"  🔍 Would redact {db_findings} secret(s) in state.db")
+            except Exception as exc:  # noqa: BLE001
+                click.echo(f"  ⚠️  state.db scan failed: {exc}")
+
+        elif target.name == ".hermes_history":
+            total_files_scanned += 1
+            content = target.read_text(encoding="utf-8")
+            redacted, count = _redact_text(content)
+            if count:
+                total_findings += count
+                total_files_modified += 1
+                files_modified.append(str(target))
+                if apply:
+                    target.write_text(redacted, encoding="utf-8")
+                    click.echo(f"  🔴 Redacted {count} secret(s) in .hermes_history")
+                else:
+                    click.echo(f"  🔍 Would redact {count} secret(s) in .hermes_history")
+
+    # Summary
+    mode = "APPLIED" if apply else "DRY-RUN"
+    click.echo(f"\n{'=' * 50}")
+    click.echo(f"  Mode: {mode}")
+    click.echo(f"  Files scanned: {total_files_scanned}")
+    click.echo(f"  Files with secrets: {total_files_modified}")
+    click.echo(f"  Total secret occurrences: {total_findings}")
+    if files_modified:
+        click.echo(f"  Files {'modified' if apply else 'flagged'}:")
+        for f in files_modified:
+            click.echo(f"    - {f}")
+    click.echo(f"{'=' * 50}")
+
+    if not apply and total_findings > 0:
+        click.echo(f"\n  Run with --apply to actually redact {total_findings} occurrence(s).")
+
+
+@main.command("install-hooks")
+def install_hooks() -> None:
+    """Install the secret-guard hook into ~/.hermes/hooks/.
+
+    Writes a thin wrapper handler.py and HOOK.yaml so the Hermes gateway
+    can load the secret-guard hook. The actual logic lives in the
+    vaultknox package and is imported by the wrapper.
+    """
+    from pathlib import Path
+
+    hook_dir = Path.home() / ".hermes" / "hooks" / "secret-guard"
+    hook_dir.mkdir(parents=True, exist_ok=True)
+
+    handler_path = hook_dir / "handler.py"
+    handler_source = '''\
+"""Thin wrapper for the VaultKnox secret-guard hook.
+
+This file is auto-generated by ``vaultknox install-hooks``.
+Do not edit — update the package and re-run install-hooks instead.
+"""
+
+from vaultknox.hooks.secret_guard import handle
+'''
+    handler_path.write_text(handler_source, encoding="utf-8")
+
+    yaml_path = hook_dir / "HOOK.yaml"
+    yaml_content = '''\
+name: secret-guard
+description: |
+  Detect secrets (API keys, tokens, passwords) in incoming chat messages
+  and redact them before the message reaches session storage. Uses the
+  existing VaultKnox detector registry — zero new regex to maintain.
+events:
+  - message:received
+'''
+    yaml_path.write_text(yaml_content, encoding="utf-8")
+
+    click.echo(f"  ✅ Installed secret-guard hook to {hook_dir}")
+    click.echo(f"     • {handler_path.name}")
+    click.echo(f"     • {yaml_path.name}")
 
 
 # ---------------------------------------------------------------------------

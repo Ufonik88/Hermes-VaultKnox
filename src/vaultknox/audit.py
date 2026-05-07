@@ -46,3 +46,93 @@ def _rotate_audit_log_if_needed(audit_log_path: Path) -> None:
     os.replace(audit_log_path, audit_log_path.with_name(f"{audit_log_path.name}.1"))
     audit_log_path.touch()
     os.chmod(audit_log_path, 0o600)
+
+
+# ------------------------------------------------------------------
+# Audit log query interface
+# ------------------------------------------------------------------
+
+
+def query_audit_log(
+    audit_log_path: Path,
+    *,
+    action: str | None = None,
+    status: str | None = None,
+    secret_id: str | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Read and filter the audit log.
+
+    Args:
+        audit_log_path: Path to the audit log file.
+        action: Filter by action name (exact match, e.g. "unlock", "add_secret").
+        status: Filter by status (exact match, e.g. "success", "failure").
+        secret_id: Filter by secret ID (exact match).
+        since: Only events at or after this UTC datetime.
+        until: Only events at or before this UTC datetime.
+        limit: Maximum number of events to return (most recent first).
+
+    Returns:
+        List of matching audit event dicts, newest first.
+    """
+    events: list[dict[str, Any]] = []
+
+    # Collect all log files (main + backups, newest first)
+    all_logs: list[Path] = []
+    if audit_log_path.exists():
+        all_logs.append(audit_log_path)
+    # Backups are numbered oldest → newest (e.g. .1 is newest backup, .5 is oldest)
+    # We want newest-first overall, so load backups in reverse order
+    backups = sorted(
+        audit_log_path.parent.glob(f"{audit_log_path.name}.*"),
+        key=lambda p: p.name,
+    )
+    for backup in reversed(backups):
+        if backup.name.endswith(str(AUDIT_MAX_BACKUPS)):
+            continue  # Skip the .5 (oldest) placeholder
+        all_logs.append(backup)
+
+    for log_path in all_logs:
+        try:
+            for line in log_path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue  # Skip malformed lines
+
+                # Apply filters
+                if action is not None and event.get("action") != action:
+                    continue
+                if status is not None and event.get("status") != status:
+                    continue
+                if secret_id is not None and event.get("secret_id") != secret_id:
+                    continue
+
+                ts_str = event.get("timestamp", "")
+                if ts_str and (since is not None or until is not None):
+                    try:
+                        ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                    except ValueError:
+                        continue
+                    if since is not None and ts < since:
+                        continue
+                    if until is not None and ts > until:
+                        continue
+
+                events.append(event)
+        except (OSError, IOError):
+            continue  # Skip unreadable log files
+
+    # Sort newest first
+    events.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
+
+    if limit is not None and limit > 0:
+        events = events[:limit]
+
+    return events

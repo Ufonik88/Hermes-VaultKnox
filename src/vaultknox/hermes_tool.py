@@ -4,6 +4,7 @@ from typing import Any
 
 from vaultknox.audit import write_audit_event
 from vaultknox.config import expand_runtime_path
+from vaultknox.detectors import DETECTORS
 from vaultknox.vault import VaultError, VaultKnox
 
 READ_ACTIONS = {"status", "list", "get_masked", "get_token", "unlock", "lock", "inject_env", "consume_token"}
@@ -29,6 +30,21 @@ def vault_tool(
         raise VaultError("Write actions are disabled for Hermes unless allow_write is enabled")
 
     try:
+        # --- Non-vault actions (no password or DB required) ---
+        if action == "scan_text":
+            text = kwargs.get("text", "")
+            findings = []
+            for detector in DETECTORS:
+                for match in detector.pattern.finditer(text):
+                    findings.append({
+                        "detector": detector.name,
+                        "severity": detector.severity,
+                        "matched_text": match.group(0),
+                        "span": match.span(),
+                    })
+            return {"findings": findings, "count": len(findings), "scanned_chars": len(text)}
+
+        # --- Vault actions ---
         if action == "status":
             status = vault.status()
             result = {
@@ -84,7 +100,7 @@ def vault_tool(
         elif action == "revoke_token":
             result = vault.revoke_token(_required_password(action, master_password), kwargs["token"], kwargs.get("reason"))
         else:
-            allowed = ", ".join(sorted(READ_ACTIONS | WRITE_ACTIONS))
+            allowed = ", ".join(sorted(READ_ACTIONS | WRITE_ACTIONS | {"scan_text"}))
             raise VaultError(f"Unsupported action '{action}'. Allowed actions: {allowed}")
     except Exception:
         write_audit_event(paths.audit_log_path, f"tool_{action}", "failure")
