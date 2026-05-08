@@ -273,7 +273,6 @@ class AutonomousSecretsStore:
 
         # Write the stripped .env (if requested)
         if strip_plaintext and new_lines is not None and not dry_run:
-            stripped = any("# auto-sealed" in l for l in new_lines if l != lines[i])
             env_path.write_text("".join(new_lines), encoding="utf-8")
 
         return results
