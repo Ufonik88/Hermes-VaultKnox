@@ -189,7 +189,7 @@ class SecretScanner:
         for base_path in self.paths:
             if not base_path.exists():
                 continue
-            for file_path, file_issues, file_findings in self._scan_path(base_path):
+            for file_path, _file_issues, file_findings in self._scan_path(base_path):
                 self._stats = self._stats._replace(files_scanned=self._stats.files_scanned + 1)
 
                 # Check permissions first

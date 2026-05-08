@@ -292,7 +292,6 @@ def test_rotation_rolls_back_on_failure(
 
     # Simulate a failure in the rotation process by patching at a lower level
     # We make the re-encryption step fail by patching list_secret_rows_raw
-    original_list_rows = db.list_secret_rows_raw
 
     def failing_list_rows() -> object:
         raise RuntimeError("Injected failure during secret listing")
