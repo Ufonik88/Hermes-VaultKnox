@@ -6,7 +6,7 @@ VaultKnox is an encrypted secrets vault designed for Hermes Agent workflows. It 
 
 ## Status
 
-VaultKnox v0.4.0 is stable.
+VaultKnox v0.4.1 is stable.
 
 - Intended use: local development and operator-managed Hermes environments.
 - Review the threat model before deploying in high-risk environments.
@@ -94,6 +94,7 @@ Compromise of any sub-key does not expose the master key or any other sub-key's 
 - Backup export and import with integrity signing
 - Audit logging with owner-only permissions and rotation
 - Hermes integration wrapper with write actions disabled by default
+- **v0.4.1** — Fixed dormant secret-guard hook: added `message:received` emitter and `pre_gateway_dispatch` plugin so redaction actually fires on incoming messages
 - **v0.4.0** — 21 built-in secret detectors for chat and file scanning
 - **v0.4.0** — Proactive `scan_text` tool action for runtime secret detection
 - **v0.4.0** — Secret-guard hook for automatic chat message redaction
