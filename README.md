@@ -1,6 +1,6 @@
 # Hermes VaultKnox
 
-![VaultKnox Logo](src/vaultknox/assets/vaultknox-logo.svg)
+![VaultKnox Logo](https://raw.githubusercontent.com/Ufonik88/Hermes-VaultKnox/main/src/vaultknox/assets/vaultknox-logo.png)
 
 VaultKnox is an encrypted secrets vault designed for Hermes Agent workflows. It provides a Python package and CLI for storing sensitive data locally, returning masked references to agents, and issuing short-lived tokens for automation without exposing plaintext in chat logs or memory files.
 

@@ -19,5 +19,10 @@ def get_logo_banner() -> str:
 
 
 def get_logo_asset_path() -> Path:
-    """Return the packaged SVG logo path when available."""
+    """Return the packaged logo path (SVG preferred, PNG fallback)."""
     return Path(str(files("vaultknox").joinpath("assets/vaultknox-logo.svg")))
+
+
+def get_logo_png_path() -> Path:
+    """Return the packaged PNG logo path (for web/GitHub usage)."""
+    return Path(str(files("vaultknox").joinpath("assets/vaultknox-logo.png")))
