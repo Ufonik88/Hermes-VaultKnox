@@ -5,6 +5,24 @@ All notable changes to VaultKnox are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] — 2026-05-12
+
+### Fixed
+
+- **Secret-Guard hook now actually fires** (`HOOK.yaml` + `src/vaultknox/hooks/secret_guard.py`)
+  - Hook was registered for `message:received` but the gateway never emitted that event — it was completely dormant
+  - Added `message:received` emitter at the correct ingress point in `gateway/run.py` (line ~7488), BEFORE `agent:start` and BEFORE any persistence
+  - Hook also now handles `agent:start` as a defense-in-depth layer for CLI/non-gateway paths
+  - Supports `message:received` (full content via `content` key) and `agent:start` (truncated via `message` key)
+
+- **VaultKnox gateway plugin** (`~/.hermes/plugins/vaultknox-secret-guard/`)
+  - Created Hermes plugin using `pre_gateway_dispatch` hook point (survives `hermes update`)
+  - Scans every incoming message BEFORE session/auth/agent using 23 detectors
+  - Auto-redacts secrets and prepends a security warning with rotation guidance
+  - Enabled in config as `vaultknox-secret-guard`
+
+- **History sanitized** — `vaultknox sanitize-history --apply` ran and redacted 2,775 secret occurrences across 35 files (session JSONL, state.db, shell history)
+
 ## [0.4.0] — 2026-05-07
 
 ### Added
