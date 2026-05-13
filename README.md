@@ -6,7 +6,7 @@ VaultKnox is an encrypted secrets vault designed for Hermes Agent workflows. It 
 
 ## Status
 
-VaultKnox v0.4.1 is stable.
+VaultKnox v0.4.2 is stable.
 
 - Intended use: local development and operator-managed Hermes environments.
 - Review the threat model before deploying in high-risk environments.
@@ -94,6 +94,7 @@ Compromise of any sub-key does not expose the master key or any other sub-key's 
 - Backup export and import with integrity signing
 - Audit logging with owner-only permissions and rotation
 - Hermes integration wrapper with write actions disabled by default
+- **v0.4.2** — Outbound response scanner: catches AI responses that ask users to paste secrets and rewrites them with safe guidance. System prompt injection proactively instructs the AI to never request secrets. New `agent_requests_secret` critical trigger.
 - **v0.4.1** — Fixed dormant secret-guard hook: added `message:received` emitter and `pre_gateway_dispatch` plugin so redaction actually fires on incoming messages
 - **v0.4.0** — 21 built-in secret detectors for chat and file scanning
 - **v0.4.0** — Proactive `scan_text` tool action for runtime secret detection
@@ -460,6 +461,7 @@ encryption internals.
 - `user_pastes_secret` — warn and suggest vault storage
 - `user_asks_store_key` — guide to CLI or tool workflow
 - `agent_needs_api_key` — check vault before asking user
+- `agent_requests_secret` — **STOP** never ask user to paste secrets in chat
 - `script_needs_secret` — inject vault-loading patterns, never hardcode
 - `cron_job_needs_auth` — recommend AutonomousSecretsStore
 

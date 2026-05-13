@@ -974,14 +974,22 @@ def sanitize_history(obj: dict, apply: bool, paths: str | None) -> None:
 
 @main.command("install-hooks")
 def install_hooks() -> None:
-    """Install the secret-guard hook into ~/.hermes/hooks/.
+    """Install the secret-guard hook and plugin into ~/.hermes/.
 
-    Writes a thin wrapper handler.py and HOOK.yaml so the Hermes gateway
-    can load the secret-guard hook. The actual logic lives in the
-    vaultknox package and is imported by the wrapper.
+    Deploys two components:
+
+    1. **Legacy hook** (~/.hermes/hooks/secret-guard/) — thin wrapper
+       importing ``vaultknox.hooks.secret_guard``. Handles the
+       ``message:received`` event for inbound redaction.
+
+    2. **Gateway plugin** (~/.hermes/plugins/vaultknox-secret-guard/) —
+       registers ``pre_gateway_dispatch``, ``post_llm_call``, and
+       ``pre_llm_call`` hooks. Provides inbound redaction, outbound
+       secret-request scanning, and system prompt injection.
     """
     from pathlib import Path
 
+    # --- Legacy hook ---
     hook_dir = Path.home() / ".hermes" / "hooks" / "secret-guard"
     hook_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1012,6 +1020,35 @@ events:
     click.echo(f"  ✅ Installed secret-guard hook to {hook_dir}")
     click.echo(f"     • {handler_path.name}")
     click.echo(f"     • {yaml_path.name}")
+
+    # --- Gateway plugin (v0.4.2 — outbound + system prompt injection) ---
+    plugin_dir = Path.home() / ".hermes" / "plugins" / "vaultknox-secret-guard"
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+
+    plugin_init = (plugin_dir / "__init__.py").read_text(encoding="utf-8") if (plugin_dir / "__init__.py").exists() else ""
+    if "post_llm_call" not in plugin_init:
+        click.echo("  ⚠️  Plugin __init__.py does not contain v0.4.2 hooks.")
+        click.echo("     Run `hermes gateway restart` after updating the plugin package.")
+
+    plugin_yaml_path = plugin_dir / "plugin.yaml"
+    plugin_yaml_content = """\
+name: vaultknox-secret-guard
+description: |
+  Detects API keys, tokens, and passwords in incoming chat messages and redacts
+  them. Also scans outbound AI responses for secret-requesting phrases and
+  injects VaultKnox behavioural rules into the system prompt.
+version: 0.4.2
+author: Ufonik / VaultKnox
+kind: standalone
+provides_hooks:
+  - pre_gateway_dispatch
+  - post_llm_call
+  - pre_llm_call
+"""
+    plugin_yaml_path.write_text(plugin_yaml_content, encoding="utf-8")
+
+    click.echo("  ✅ Updated vaultknox-secret-guard plugin to v0.4.2")
+    click.echo(f"     • {plugin_yaml_path.name}")
 
 
 # ---------------------------------------------------------------------------

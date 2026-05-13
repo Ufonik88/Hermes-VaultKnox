@@ -32,6 +32,25 @@ vaultknox install-hooks
 
 This writes `~/.hermes/hooks/secret-guard/handler.py` and `HOOK.yaml`, which use the VaultKnox detector registry to scan and redact every incoming `message:received` event.
 
+### 2b. Proactive Protection (v0.4.2+)
+
+The VaultKnox gateway plugin at `~/.hermes/plugins/vaultknox-secret-guard/` provides three layers of protection:
+
+| Hook | When | What It Does |
+|------|------|-------------|
+| `pre_gateway_dispatch` | Inbound message arrives | Scans and redacts secrets in user messages (v0.4.1) |
+| `pre_llm_call` | Before each LLM response | Injects behavioral rules: "NEVER ask user to paste secrets" |
+| `post_llm_call` | After each LLM response | Scans AI output for secret-requesting phrases, rewrites with safe guidance |
+
+The plugin survives `hermes update` and is automatically loaded when configured in `config.yaml`:
+```yaml
+plugins:
+  enabled:
+    - vaultknox-secret-guard
+```
+
+**The `pre_llm_call` hook** ensures the AI is reminded every turn to never request secrets in chat. **The `post_llm_call` hook** catches any residual requests and rewrites them with safe guidance directing users to the `vault-add-key` CLI.
+
 ### 3. Safe Storage Pattern
 
 Direct users to the CLI (bypasses chat entirely):
@@ -93,6 +112,7 @@ Agents should proactively suggest VaultKnox usage in these situations:
 |---------|----------|--------|
 | User pastes what looks like an API key/token | **Critical** | Warn, redact, suggest `vault-add-key` |
 | User asks to store a credential | **High** | Guide to CLI or vault tool |
+| Agent is about to ask the user to paste a secret in chat | **Critical** | STOP. Guide to `vault-add-key` CLI; never ask for raw secrets in chat |
 | Agent needs an API key but none is in env | **High** | Check vault via `get_masked`; ask user to add if missing |
 | Agent is writing a script that needs credentials | **Medium** | Inject `AutonomousSecretsStore` pattern; never hardcode |
 | Agent is setting up a cron job needing auth | **Medium** | Use `AutonomousSecretsStore`; guide user to store secret first |
