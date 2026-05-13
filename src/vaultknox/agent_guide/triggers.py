@@ -76,6 +76,20 @@ TRIGGERS: list[dict] = [
             "automated api call", "unattended script",
         ],
     },
+    {
+        "id": "agent_requests_secret",
+        "description": "Agent is about to ask the user to provide an API key, token, or password in chat",
+        "action": (
+            "STOP. Never ask the user to paste a secret in chat. "
+            "Guide them to vault-add-key CLI or offer to store via vault tool. "
+            "If you need the key for an API call, use get_masked + one-time token."
+        ),
+        "priority": "critical",
+        "keywords": [
+            "api key", "api_key", "your key", "your token", "your password",
+            "your secret", "paste", "drop your", "send me", "provide your",
+        ],
+    },
 ]
 
 

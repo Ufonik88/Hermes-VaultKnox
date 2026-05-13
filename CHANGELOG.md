@@ -5,6 +5,25 @@ All notable changes to VaultKnox are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] — 2026-05-13
+
+### Added
+
+- **Outbound Response Scanner** (`post_llm_call` hook) — scans AI responses before they reach the user for phrases that ask users to paste secrets in chat. Detected phrases are automatically rewritten with safe guidance directing users to `vault-add-key` CLI.
+- **System Prompt Injection** (`pre_llm_call` hook) — injects VaultKnox behavioural rules into the system message before each LLM call, preventing the AI from requesting secrets in the first place.
+- **`agent_requests_secret` trigger** — new critical-priority trigger in `agent_guide/triggers.py` that detects when the agent is about to ask for a secret in chat and blocks it with safe guidance.
+- **Enhanced `install-hooks` command** — now also deploys/updates the gateway plugin (plugin.yaml) alongside the legacy hook, ensuring both inbound and outbound protection are in place.
+
+### Changed
+
+- **Plugin version bumped** to 0.4.2 (adds `post_llm_call` and `pre_llm_call` to `provides_hooks`).
+- **Package version bumped** to 0.4.2.
+
+### Security
+
+- AI agents can no longer request secrets via chat — outbound scanner catches and rewrites secret-requesting phrases.
+- System prompt injection ensures the AI is proactively instructed to never ask for secrets, providing defense-in-depth beyond pattern matching.
+
 ## [0.4.1] — 2026-05-12
 
 ### Fixed
