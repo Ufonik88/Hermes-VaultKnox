@@ -17,7 +17,7 @@ class SecretRecord:
     payload: dict[str, Any]
 
 
-ALLOWED_TYPES = {"card", "credential", "api_key", "note", "connection_string", "password"}
+ALLOWED_TYPES = {"card", "credential", "api_key", "note", "connection_string", "password", "oauth"}
 
 _CONNECTION_STRING_SCHEMES = {"postgresql", "postgres", "mysql", "mongodb", "redis", "amqp", "sqlite", "mssql", "mariadb"}
 
@@ -32,6 +32,7 @@ def validate_secret(secret_type: str, payload: dict[str, Any]) -> None:
         "note": _validate_note,
         "connection_string": _validate_connection_string,
         "password": _validate_password,
+        "oauth": _validate_oauth,  # NEW: OAuth tokens with refresh support
     }[secret_type]
     validator(payload)
 
@@ -128,6 +129,15 @@ def _validate_connection_string(payload: dict[str, Any]) -> None:
 
 def _validate_password(payload: dict[str, Any]) -> None:
     _required_str(payload, "value")
+
+
+def _validate_oauth(payload: dict[str, Any]) -> None:
+    """Validate OAuth credential payload."""
+    _required_str(payload, "provider_id")
+    _required_str(payload, "access_token")
+    # refresh_token is optional but recommended
+    if payload.get("refresh_token") is not None:
+        _required_str(payload, "refresh_token")
 
 
 def _required_str(payload: dict[str, Any], field: str) -> str:
