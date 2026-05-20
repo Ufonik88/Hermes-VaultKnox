@@ -6,7 +6,7 @@ VaultKnox is an encrypted secrets vault designed for Hermes Agent workflows. It 
 
 ## Status
 
-VaultKnox v0.4.2 is stable.
+VaultKnox v0.5.0 is stable.
 
 - Intended use: local development and operator-managed Hermes environments.
 - Review the threat model before deploying in high-risk environments.
@@ -94,6 +94,12 @@ Compromise of any sub-key does not expose the master key or any other sub-key's 
 - Backup export and import with integrity signing
 - Audit logging with owner-only permissions and rotation
 - Hermes integration wrapper with write actions disabled by default
+- **v0.5.0** — MCP Server: stdio-based MCP transport for direct agent integration
+- **v0.5.0** — Dashboard: local token-guarded web console (127.0.0.1)
+- **v0.5.0** — OAuth PKCE: RFC 7636 PKCE flow for Google, GitHub, OpenAI
+- **v0.5.0** — Skill Generation: generates SKILL.md contracts for sub-agents
+- **v0.5.0** — Policy Engine v2: per-agent, per-service action policies
+- **v0.5.0** — Secret type: `oauth` with auto-refresh tokens
 - **v0.4.2** — Outbound response scanner: catches AI responses that ask users to paste secrets and rewrites them with safe guidance. System prompt injection proactively instructs the AI to never request secrets. New `agent_requests_secret` critical trigger.
 - **v0.4.1** — Fixed dormant secret-guard hook: added `message:received` emitter and `pre_gateway_dispatch` plugin so redaction actually fires on incoming messages
 - **v0.4.0** — 21 built-in secret detectors for chat and file scanning
