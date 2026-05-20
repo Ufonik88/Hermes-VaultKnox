@@ -263,8 +263,27 @@ def _create_server() -> Server:
 
 def run_mcp_server() -> None:
     """Entry point for MCP stdio server."""
-    server = _create_server()
-    stdio_server.run_server(server)
+    import asyncio
+    from mcp.server.stdio import stdio_server
+    from mcp.types import ServerCapabilities, Tool
+    
+    async def _run():
+        server = _create_server()
+        
+        # Create initialization options for MCP 1.26
+        from mcp.server import InitializationOptions
+        
+        options = InitializationOptions(
+            server_name="vaultknox",
+            server_version=__version__,
+            capabilities=ServerCapabilities(tools={})
+        )
+        
+        # Get streams from stdio context manager
+        async with stdio_server() as (read_stream, write_stream):
+            await server.run(read_stream, write_stream, options)
+    
+    asyncio.run(_run())
 
 
 if __name__ == "__main__":
