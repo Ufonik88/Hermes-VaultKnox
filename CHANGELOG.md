@@ -5,6 +5,39 @@ All notable changes to VaultKnox are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-05-20
+
+### Added
+
+- **MCP Server** (`hermes-vault mcp`) — stdio-based MCP transport for direct agent integration
+  - Tools: status, list, get_metadata, scan, verify, health
+  - Sub-agents can access vault without operator proxying every call
+- **Dashboard Console** (`hermes-vault dashboard`) — local token-guarded web UI (127.0.0.1 only)
+  - Views: Health, Credentials, Audit, Scanner
+  - No raw secrets exposed in browser
+- **OAuth PKCE** (`hermes-vault oauth`) — RFC 7636 PKCE flow
+  - Providers: Google, GitHub, OpenAI
+  - Auto-refresh tokens when expired
+- **Skill Generation** (`hermes-vault generate-skill`) — generates SKILL.md contracts for sub-agents
+  - Defines credential access patterns, allowed services, security rules
+  - Prevents agents from freelancing credential discovery
+- **Policy Engine v2** (`src/vaultknox/policy.py`) — per-agent, per-service action policies
+  - Actions: get_credential, get_env, get_metadata, verify, rotate, delete, add
+  - Agent capabilities: list_credentials, scan_secrets, export_backup
+- **Secret type: `oauth`** — new type with refresh_token support
+  - Auto-refresh before expiry
+
+### Changed
+
+- **Package version bumped** to 0.5.0
+- **MCP 1.26 compatibility** — fixed stdio server for new async API
+
+### Security
+
+- Agents access vault directly via MCP — no plaintext passed through chat
+- Dashboard uses token auth, no secrets in browser
+- Policy engine enforces deny-by-default per service
+
 ## [0.4.2] — 2026-05-13
 
 ### Added

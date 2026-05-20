@@ -88,13 +88,92 @@ def status(obj: dict[str, VaultKnox]) -> None:
         "unlocked": state.unlocked,
         "secret_count": state.secret_count,
         "auto_lock_minutes": state.auto_lock_minutes,
-    }, indent=2))
+    }))
+
+
+@main.command()
+def mcp() -> None:
+    """Start the MCP stdio server for VaultKnox."""
+    from vaultknox.mcp_server import run_mcp_server
+
+    run_mcp_server()
+
+
+@main.command("generate-skill")
+@click.option("--output", "output_path", type=click.Path(path_type=Path), default=None, help="Output path for SKILL.md")
+@click.option("--agent", "agent_id", default=None, help="Agent ID to scope skill for")
+def generate_skill(output_path: Path | None, agent_id: str | None) -> None:
+    """Generate SKILL.md contract for credential access."""
+    from vaultknox.skills import generate_skill
+
+    try:
+        result = generate_skill(output_path, agent_id)
+        click.echo("Generated: " + result["path"])
+        click.echo("Hash: " + result["content_hash"])
+        click.echo("Secrets: " + str(result["secret_count"]))
+    except Exception as e:
+        raise click.ClickException(str(e))
+
+
+@main.command()
+@click.option("--host", default="127.0.0.1", help="Host to bind to")
+@click.option("--port", default=0, type=int, help="Port (0 = auto)")
+@click.option("--no-open", is_flag=True, help="Don't open browser automatically")
+def dashboard(host: str, port: int, no_open: bool) -> None:
+    """Start the VaultKnox Dashboard (local, token-guarded)."""
+    from vaultknox.dashboard import serve_dashboard
+
+    serve_dashboard(host=host, port=port, open_browser=not no_open)
+
+
+@main.command("oauth")
+@click.option("--provider", required=True, type=click.Choice(["google", "github", "openai"]), help="OAuth provider")
+@click.option("--client-id", required=True, help="OAuth client ID")
+@click.option("--client-secret", required=True, help="OAuth client secret")
+@click.option("--alias", default="default", help="Credential alias")
+@click.option("--port", default=0, type=int, help="Callback port (0 = auto)")
+@click.option("--timeout", default=300, type=int, help="Callback timeout in seconds")
+@click.option("--no-open", is_flag=True, help="Don't open browser")
+@click.pass_obj
+def oauth_login(obj: dict[str, VaultKnox], provider: str, client_id: str, client_secret: str, alias: str, port: int, timeout: int, no_open: bool) -> None:
+    """OAuth PKCE login flow - authenticates via browser and stores tokens."""
+    from vaultknox.oauth import oauth_login as do_oauth_login
+
+    vault = obj["vault"]
+
+    try:
+        result = do_oauth_login(
+            provider_id=provider,
+            client_id=client_id,
+            client_secret=client_secret,
+            alias=alias,
+            port=port or None,
+            timeout=float(timeout),
+            open_browser=not no_open,
+        )
+
+        # Store in vault
+        stored = vault.add_secret(
+            password=_prompt_password(),
+            secret_id=result.secret_id,
+            secret_type="oauth",
+            label=result.label,
+            payload=result.to_payload(),
+        )
+        click.echo(json.dumps(stored, indent=2))
+        click.echo(f"\nOAuth credential '{result.secret_id}' stored successfully.")
+        if result.refresh_token:
+            click.echo("Refresh token stored - tokens will auto-refresh when expired.")
+
+    except Exception as e:
+        raise click.ClickException(str(e))
 
 
 @main.command()
 @click.option("--auto-lock-minutes", default=15, show_default=True, type=int)
 @click.pass_obj
 def init(obj: dict[str, VaultKnox], auto_lock_minutes: int) -> None:
+    """Initialize a new vault with a master password."""
     vault = obj["vault"]
     password = _prompt_password(confirm=True)
     vault.initialize(password, auto_lock_minutes=auto_lock_minutes)
