@@ -326,13 +326,13 @@ class DashboardServer:
             def do_GET(self):
                 parsed = urlparse(self.path)
                 qs = parse_qs(parsed.query)
-                
-                # Check token
+
+                # Check token - reject if missing OR invalid
                 token = qs.get("token", [""])[0]
-                if token and not _verify_token(token, DashboardServer._instance.token):
+                if not token or not _verify_token(token, DashboardServer._instance.token):
                     self.send_error(401, "Unauthorized")
                     return
-                
+
                 if parsed.path == "/api/health":
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
