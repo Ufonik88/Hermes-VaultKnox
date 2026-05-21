@@ -122,7 +122,6 @@ def initialized_db(temp_vault_dir: Path, mock_paths) -> tuple[Path, str]:
     )
     # Create a test verifier (we can't use real argon2 derivation in tests without heavy mock)
     master_key = b"placeholder_master_key_32bytes!!"  # Placeholder for testing
-    entry_key = derive_scoped_key(master_key)
     verification = encrypt_payload(derive_scoped_key(master_key, b"vaultknox-verifier"), {"ok": True})
     verifier_json = json.dumps({
         "nonce": verification.nonce.hex(),
@@ -514,7 +513,6 @@ class TestRunAllChecks:
 
     def test_report_to_dict_format(self, mock_paths):
         """Report.to_dict() returns properly formatted dictionary."""
-        checker = VaultHealthChecker(mock_paths)
         report = VaultHealthReport(
             overall_status="healthy",
             checks=[HealthCheckResult("test", CheckStatus.PASS, "OK", CheckSeverity.INFO)],

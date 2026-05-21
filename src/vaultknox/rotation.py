@@ -119,8 +119,8 @@ def _restore_from_pre_rotation_backup(
         raise VaultError(f"Unsupported pre-rotation backup format version: {raw['version']}")
 
     try:
-        nonce = bytes.fromhex(raw["nonce"])
-        ciphertext = bytes.fromhex(raw["ciphertext"])
+        _nonce = bytes.fromhex(raw["nonce"])
+        _ciphertext = bytes.fromhex(raw["ciphertext"])
     except ValueError as exc:
         raise VaultError("Pre-rotation backup contains invalid hex-encoded values") from exc
 

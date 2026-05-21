@@ -487,7 +487,8 @@ def secrets_auto_seal(obj: dict, dry_run: bool, strip: bool) -> None:
     store = AutonomousSecretsStore()
     results = store.auto_seal(dry_run=dry_run, strip_plaintext=strip)
 
-    label = "🔄 Would seal" if dry_run else "✅ Sealed"
+    # label = "🔄 Would seal" if dry_run else "✅ Sealed"
+    # (removed unused variable)
 
     if results["encrypted"]:
         for item in results["encrypted"]:
