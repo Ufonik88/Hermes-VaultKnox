@@ -6,7 +6,7 @@ VaultKnox is an encrypted secrets vault designed for Hermes Agent workflows. It 
 
 ## Status
 
-VaultKnox v0.5.0 is stable.
+VaultKnox v0.6.0 is stable.
 
 - Intended use: local development and operator-managed Hermes environments.
 - Review the threat model before deploying in high-risk environments.
@@ -94,6 +94,11 @@ Compromise of any sub-key does not expose the master key or any other sub-key's 
 - Backup export and import with integrity signing
 - Audit logging with owner-only permissions and rotation
 - Hermes integration wrapper with write actions disabled by default
+- **v0.6.0** — MCP Server crash fixed: `Path` import added, dead imports removed, path resolution corrected so `vaultknox_scan` and health tools execute without NameError
+- **v0.6.0** — Generic bearer verification fixed: `_verify_generic_bearer` now registered and usable via `--service generic_bearer`
+- **v0.6.0** — Gateway plugin deployment fixed: `install-hooks` now writes the full `__init__.py` (with `pre_gateway_dispatch`, `pre_llm_call`, `post_llm_call` + `register(ctx)`) instead of only warning
+- **v0.6.0** — Timezone-naive expiry dates handled safely: no more `TypeError` from comparing naive `datetime` against `datetime.now(timezone.utc)`
+- **v0.6.0** — Redaction corruption fixed: overlapping/nested secret spans merged before replacement, preventing `[REDACT[REDACTED...` output
 - **v0.5.0** — MCP Server: stdio-based MCP transport for direct agent integration
 - **v0.5.0** — Dashboard: local token-guarded web console (127.0.0.1)
 - **v0.5.0** — OAuth PKCE: RFC 7636 PKCE flow for Google, GitHub, OpenAI
@@ -485,6 +490,10 @@ password mechanics — just behavioural rules.
 | `vaultknox audit query` | Query audit log with filters (action, status, date range) |
 | `vaultknox expiry set-expiry <id> --days 30` | Set secret expiration |
 | `vaultknox expiry notify` | List expired or soon-to-expire secrets |
+
+## Changelog / What's New
+
+See [CHANGELOG.md](CHANGELOG.md) for the complete version history, including the v0.6.0 security & code-review patch with all critical fixes.
 
 ## Release Guidance
 
