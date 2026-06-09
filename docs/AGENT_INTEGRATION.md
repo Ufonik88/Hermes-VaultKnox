@@ -32,9 +32,11 @@ vaultknox install-hooks
 
 This writes `~/.hermes/hooks/secret-guard/handler.py` and `HOOK.yaml`, which use the VaultKnox detector registry to scan and redact every incoming `message:received` event.
 
+> **v0.6.0 fix:** Earlier versions only warned if the gateway plugin `__init__.py` was missing or outdated but never wrote it. `install-hooks` now **always writes** a complete, standalone `__init__.py` implementing all three hooks (`pre_gateway_dispatch`, `pre_llm_call`, `post_llm_call`) and a `register(ctx)` helper. Run `vaultknox install-hooks` after upgrading to v0.6.0 to ensure the plugin is up to date.
+
 ### 2b. Proactive Protection (v0.4.2+)
 
-The VaultKnox gateway plugin at `~/.hermes/plugins/vaultknox-secret-guard/` provides three layers of protection:
+The VaultKnox gateway plugin at `~/.hermes/plugins/vaultknox-secret-guard/` provides three layers of protection (reliable since v0.6.0 — earlier versions of `install-hooks` did not deploy the plugin file):
 
 | Hook | When | What It Does |
 |------|------|-------------|
