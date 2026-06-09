@@ -396,3 +396,24 @@ def test_bulk_import_validation_error_raises(vault: VaultKnox) -> None:
     ]
     with pytest.raises(VaultError, match="missing_key_field|key"):
         vault.bulk_import_secrets("correct horse battery staple", entries)
+
+
+def test_naive_timezone_expiry_is_handled_safely(vault: VaultKnox) -> None:
+    vault.initialize("correct horse battery staple")
+    vault.unlock("correct horse battery staple")
+    # Naive timezone ISO string (without offset)
+    past_naive = "2000-01-01T00:00:00"
+    vault.add_secret(
+        "correct horse battery staple",
+        "naive_expired_key",
+        "api_key",
+        "Naive Expired Key",
+        {"key": "sk-naive-expired", "service": "NaiveSvc"},
+        expires_at=past_naive,
+    )
+
+    # Retrieval should not raise TypeError and correctly detect it as expired
+    result = vault.get_secret("correct horse battery staple", "naive_expired_key")
+    assert result["expired"] is True
+    assert result["id"] == "naive_expired_key"
+

@@ -7,21 +7,17 @@ exposing raw secrets.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import secrets
-import webbrowser
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 import click
+
 from vaultknox import __version__
 from vaultknox.config import expand_runtime_path
 from vaultknox.health import VaultHealthChecker
 from vaultknox.scanner import SecretScanner
-from vaultknox.verifier import CredentialVerifier
 from vaultknox.vault import VaultKnox
 
 logger = logging.getLogger("vaultknox.dashboard")
@@ -166,14 +162,21 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
             document.getElementById('secretCount').textContent = secrets.length;
             
             const tbody = document.querySelector('#credentialsTable tbody');
-            tbody.innerHTML = secrets.map(s => '<tr><td>' + s.id + '</td><td><span class="badge badge-' + s.type + '">' + s.type + '</span></td><td>' + s.label + '</td><td>' + (s.created_at || '') + '</td><td>' + (s.expires_at || '-') + '</td></tr>').join('') || '<tr><td colspan="5" style="text-align:center;color:#8b949e">No secrets stored</td></tr>';
+            const rows = secrets.map(s => {
+                const badge = '<span class="badge badge-' + s.type + '">' + s.type + '</span>';
+                return '<tr><td>' + s.id + '</td><td>' + badge + '</td><td>' + s.label + '</td><td>' + (s.created_at || '') + '</td><td>' + (s.expires_at || '-') + '</td></tr>';
+            }).join('');
+            tbody.innerHTML = rows || '<tr><td colspan="5" style="text-align:center;color:#8b949e">No secrets stored</td></tr>';
         }
         
         async function loadAudit() {
             const data = await api('audit');
             const entries = data.entries || [];
             const tbody = document.querySelector('#auditTable tbody');
-            tbody.innerHTML = entries.slice(0, 20).map(e => '<tr><td>' + e.time + '</td><td>' + e.action + '</td><td><span class="badge">' + e.status + '</span></td><td>' + (e.secret_id || '-') + '</td></tr>').join('') || '<tr><td colspan="4" style="text-align:center;color:#8b949e">No audit entries</td></tr>';
+            const rows = entries.slice(0, 20).map(e => {
+                return '<tr><td>' + e.time + '</td><td>' + e.action + '</td><td><span class="badge">' + e.status + '</span></td><td>' + (e.secret_id || '-') + '</td></tr>';
+            }).join('');
+            tbody.innerHTML = rows || '<tr><td colspan="4" style="text-align:center;color:#8b949e">No audit entries</td></tr>';
         }
         
         async function runScan() {
@@ -240,7 +243,6 @@ class DashboardServer:
     def _get_health(self) -> dict[str, Any]:
         """Get vault health."""
         # Always accessible - doesn't require unlock
-        import os
         from vaultknox.config import expand_runtime_path
         
         paths = expand_runtime_path()
@@ -317,7 +319,7 @@ class DashboardServer:
         """Start the HTTP server."""
         import http.server
         import socketserver
-        from urllib.parse import urlparse, parse_qs
+        from urllib.parse import parse_qs, urlparse
         
         # Store self for handler access
         DashboardServer._instance = self
@@ -375,7 +377,7 @@ class DashboardServer:
             self.port = httpd.server_address[1]
             url = f"http://{self.host}:{self.port}/?token={self.token}"
             
-            click.echo(f"VaultKnox Dashboard running at:")
+            click.echo("VaultKnox Dashboard running at:")
             click.echo(url)
             click.echo("")
             click.echo("Press Ctrl+C to stop")

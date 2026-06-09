@@ -125,11 +125,19 @@ def handle(event_type: str, context: dict[str, Any]) -> None:
     if not findings:
         return
 
+    # Merge overlapping/nested spans to avoid corruption during redaction
+    spans = sorted([f["span"] for f in findings], key=lambda s: s[0])
+    merged = []
+    for start, end in spans:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+
     # Redact in-place, sorting reverse-order so span replacements don't
     # shift the indices of earlier matches.
     redacted = text
-    for finding in sorted(findings, key=lambda f: f["span"][0], reverse=True):
-        start, end = finding["span"]
+    for start, end in reversed(merged):
         redacted = redacted[:start] + _REDACT_REPLACEMENT + redacted[end:]
 
     # Write back to the correct context key

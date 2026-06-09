@@ -101,8 +101,8 @@ class SkillGenerator:
         Returns:
             Generated SKILL.md content
         """
-        from vaultknox.vault import VaultKnox
         from vaultknox.config import DEFAULT_TOKEN_TTL_SECONDS
+        from vaultknox.vault import VaultKnox
         
         vault = VaultKnox(self.paths)
         secrets = vault.list_secrets() if vault.status().unlocked else []
@@ -124,7 +124,7 @@ class SkillGenerator:
         # Generate content
         from datetime import datetime
         content = DEFAULT_SKILL_TEMPLATE.format(
-            version="0.5.0",
+            version="0.6.0",
             generated_at=datetime.now().isoformat(),
             allowed_services="\n".join(allowed) if allowed else "- (none configured)",
             masked_services="\n".join(masked) if masked else "- (none)",

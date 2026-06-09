@@ -5,6 +5,35 @@ All notable changes to VaultKnox are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] — 2026-06-09
+
+### Fixed (Security & Code Review — v0.5.0 → v0.6.0)
+
+- **MCP Server crash on `vaultknox_scan`** — `Path` was used but not imported in `mcp_server.py`. Also removed dead imports (`sys`, `VaultPaths`, `run_health_checks`, duplicate `stdio_server`/`Tool`) and switched internal path handling from the non-existent `get_default_paths` to `expand_runtime_path` (with correct attribute usage). The scan and health tool paths now execute cleanly.
+- **Generic bearer verification** — `_verify_generic_bearer` was implemented but never registered. Added `register_provider("generic_bearer", _verify_generic_bearer)` so `--service generic_bearer` (and live verification flows) work instead of returning "Unknown service".
+- **`install-hooks` now actually writes the gateway plugin** — The command previously only read `~/.hermes/plugins/vaultknox-secret-guard/__init__.py` and printed a warning if v0.4.2 hooks were missing. It now **writes** a complete, standalone `__init__.py` (and `plugin.yaml`) implementing `pre_gateway_dispatch`, `pre_llm_call`, and `post_llm_call`, plus a `register(ctx)` helper compatible with both `ctx.register_hook` and `ctx.on`. The legacy `~/.hermes/hooks/secret-guard` handler continues to be written for older paths.
+- **Timezone-naive expiry dates caused TypeError crashes** — `datetime.fromisoformat()` on strings without offsets (e.g. `2026-12-31`) produced naive datetimes that were compared to `datetime.now(timezone.utc)`, raising `TypeError`. Added `_parse_and_normalize_expiry` (and equivalent inline normalization in the CLI) and applied it in `VaultKnox.get_raw`, `get_masked`, the `list --expired` filter, and `expiry-notify`. A new test `test_naive_timezone_expiry_is_handled_safely` covers the case.
+- **Overlapping/nested span redaction corruption in secret-guard** — `handle()` sorted redactions in reverse start order but did not merge overlapping or nested matches first. Multiple detectors hitting the same or nested regions produced nested `[REDACT[REDACTED...` output or index-shift corruption. Added a pre-pass that merges spans before replacement (both inbound `handle()` and the outbound rewrite path already had similar logic; inbound is now consistent).
+- **31 ruff violations cleaned** — Unused imports, import sort order, bare `f`-string issues, and a few manual cleanups across `dashboard.py`, `mcp_server.py`, `oauth/__init__.py`, `policy.py`, `skills/__init__.py`, `cli.py`, `vault.py`, `verifier.py`, and `secret_guard.py`. `uv run ruff check` now reports zero violations. Several "except Exception as e: raise ClickException(str(e))" sites were updated to `from e` chaining for better tracebacks.
+
+### Added
+
+- `tests/test_mcp_server.py` — new test module covering MCP server import hygiene (no NameError on `Path` etc.), tool schema completeness, direct exercise of the scan/status code paths that the handlers use, and error-path shapes. This guards the historical `vaultknox_scan` crash site and the `SecretScanner(paths=[...])` construction used by the MCP scan tool.
+- Additional unit coverage in `tests/test_vault.py` (naive expiry) and `tests/test_verifier.py` (end-to-end `generic_bearer` via `CredentialVerifier.verify`).
+- Version bumped to 0.6.0 (pyproject.toml, `vaultknox/__init__.py`, skill generator template).
+
+### Changed
+
+- `VaultKnox.status()` is now defensive: if the vault has not been initialized (no `vault_config` table yet), it falls back to the default auto-lock minutes instead of raising `sqlite3.OperationalError`. This makes status/health queries safe on a brand-new vault directory (important for MCP/dashboard early calls).
+- Minor import reordering and dead-code removal in several modules as part of the lint sweep (no behavior change).
+
+### Security / Robustness
+
+- All critical functional bugs and security-relevant gaps identified in the v0.5.0 → v0.6.0 review have been closed.
+- Redaction is now overlap-safe (prevents accidental leakage or garbled messages when multiple detectors match the same secret).
+- Expiry handling no longer crashes on user-supplied or previously-stored naive ISO dates.
+- Gateway plugin deployment is now reliable — the `vaultknox-secret-guard` hooks that implement outbound secret-request blocking and system-prompt injection will actually be present after `install-hooks`.
+
 ## [0.5.0] — 2026-05-20
 
 ### Added

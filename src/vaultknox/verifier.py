@@ -277,6 +277,8 @@ register_provider("openai", _verify_openai)
 register_provider("anthropic", _verify_anthropic)
 register_provider("github", _verify_github)
 register_provider("google_oauth", _verify_google_oauth)
+register_provider("generic_bearer", _verify_generic_bearer)
+
 
 
 # ----------------------------------------------------------------------

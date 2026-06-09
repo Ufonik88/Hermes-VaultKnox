@@ -20,11 +20,10 @@ import urllib.parse
 import webbrowser
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from pathlib import Path
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
-from urllib.request import Request, urlopen
 from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 logger = logging.getLogger("vaultknox.oauth")
 
@@ -518,7 +517,7 @@ def oauth_login(
         print(f"Opened: {auth_url}")
         print("Please authorize in your browser...")
     else:
-        print(f"Visit this URL to authorize:")
+        print("Visit this URL to authorize:")
         print(auth_url)
     
     # Wait for callback

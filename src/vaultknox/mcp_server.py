@@ -8,15 +8,13 @@ from __future__ import annotations
 
 import json
 import logging
-import sys
+from pathlib import Path
 from typing import Any
 
 from mcp.server import Server
-from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
 from vaultknox import __version__
-from vaultknox.config import VaultPaths, expand_runtime_path
 
 logger = logging.getLogger("vaultknox.mcp")
 
@@ -102,17 +100,16 @@ def _create_server() -> Server:
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[TextContent]:
         """Handle tool calls."""
-        from vaultknox.scanner import SecretScanner
+        from vaultknox.config import expand_runtime_path
         from vaultknox.health import VaultHealthChecker
+        from vaultknox.scanner import SecretScanner
 
         # Import here to avoid circular imports
         from vaultknox.vault import VaultKnox
-        from vaultknox.config import get_default_paths
-        from vaultknox.health import run_health_checks
 
         try:
-            paths = get_default_paths()
-            vault = VaultKnox(paths)
+            vault_paths = expand_runtime_path()
+            vault = VaultKnox(vault_paths)
 
             if name == "vaultknox_status":
                 status = vault.status()
@@ -178,7 +175,8 @@ def _create_server() -> Server:
 
             if name == "vaultknox_scan":
                 scan_path_arg = (arguments.get("path") if arguments else None) or "~/.hermes"
-                scan_path = Path(scan_path_arg.replace("~", str(paths.home)))
+                # Replace ~ with the real user home for the Hermes scan root (independent of vault base_dir)
+                scan_path = Path(scan_path_arg.replace("~", str(Path.home())))
 
                 # SecretScanner takes paths at init time and scan() takes no args
                 scanner = SecretScanner(paths=[scan_path])
@@ -232,7 +230,7 @@ def _create_server() -> Server:
 
             if name == "vaultknox_health":
                 # Run health checks using VaultHealthChecker
-                checker = VaultHealthChecker(paths)
+                checker = VaultHealthChecker(vault_paths)
                 report = checker.run_all_checks()
 
                 # Format for MCP response
@@ -264,8 +262,9 @@ def _create_server() -> Server:
 def run_mcp_server() -> None:
     """Entry point for MCP stdio server."""
     import asyncio
+
     from mcp.server.stdio import stdio_server
-    from mcp.types import ServerCapabilities, Tool
+    from mcp.types import ServerCapabilities
     
     async def _run():
         server = _create_server()

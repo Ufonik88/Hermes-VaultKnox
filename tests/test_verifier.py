@@ -515,6 +515,29 @@ class TestCredentialVerifierIntegration(unittest.TestCase):
         self.assertEqual(result.status, "unknown")
         self.assertIn("Verification error", result.message)
 
+    @patch("vaultknox.verifier.requests.request")
+    def test_full_verification_flow_generic_bearer(self, mock_request):
+        """Test full flow: vault response -> verify for generic_bearer."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_request.return_value = mock_response
+
+        vault_response = {
+            "id": "secret_generic",
+            "type": "api_key",
+            "label": "Generic Token",
+            "payload": {
+                "service": "generic_bearer",
+                "key": "bearer_token_123",
+                "verify_url": "https://custom.api/verify",
+            },
+        }
+
+        result = self.verifier.verify_from_vault_response(vault_response)
+        self.assertEqual(result.status, "valid")
+        self.assertEqual(result.provider, "generic")
+
+
 
 class TestSecurityNoLogging(unittest.TestCase):
     """Tests to ensure no secret values are logged or echoed."""

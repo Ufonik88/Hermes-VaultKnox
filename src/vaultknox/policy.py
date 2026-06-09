@@ -6,11 +6,11 @@ v2 format with action allowlists and capability grants.
 
 from __future__ import annotations
 
-import hashlib
-import yaml
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 # Policy actions
 ACTIONS = frozenset([

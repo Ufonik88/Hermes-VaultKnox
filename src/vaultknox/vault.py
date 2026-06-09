@@ -39,6 +39,14 @@ def _safe_env_pop(var_name: str) -> None:
         pass
 
 
+def _parse_and_normalize_expiry(expires_at: str) -> datetime:
+    """Parse an ISO 8601 string and ensure it is timezone-aware in UTC if naive."""
+    dt = datetime.fromisoformat(expires_at)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 class VaultError(RuntimeError):
     pass
 
@@ -78,7 +86,10 @@ class VaultKnox:
     def status(self) -> VaultStatus:
         initialized = self.paths.db_path.exists()
         count = self.db.count_secrets() if initialized else 0
-        auto_lock = int(self.db.get_config("auto_lock_minutes") or DEFAULT_AUTO_LOCK_MINUTES)
+        try:
+            auto_lock = int(self.db.get_config("auto_lock_minutes") or DEFAULT_AUTO_LOCK_MINUTES)
+        except Exception:
+            auto_lock = DEFAULT_AUTO_LOCK_MINUTES
         return VaultStatus(initialized=initialized, unlocked=self.sessions.is_unlocked(), secret_count=count, auto_lock_minutes=auto_lock)
 
     def unlock(self, password: str) -> dict[str, Any]:
@@ -118,7 +129,7 @@ class VaultKnox:
         key = self._entry_key(password)
         row = self.db.get_secret_row(secret_id)
         expires_at = row["expires_at"] if "expires_at" in row.keys() else None
-        if expires_at and datetime.fromisoformat(expires_at) <= datetime.now(timezone.utc):
+        if expires_at and _parse_and_normalize_expiry(expires_at) <= datetime.now(timezone.utc):
             write_audit_event(self.paths.audit_log_path, "get_raw", "expired", secret_id=secret_id)
             return {"expired": True, "expires_at": expires_at, "id": secret_id}
         encrypted = EncryptedPayload(nonce=row["nonce"], ciphertext=row["data"], tag=row["tag"])
@@ -139,7 +150,7 @@ class VaultKnox:
         self._require_unlocked()
         row = self.db.get_secret_row(secret_id)
         expires_at = row["expires_at"] if "expires_at" in row.keys() else None
-        if expires_at and datetime.fromisoformat(expires_at) <= datetime.now(timezone.utc):
+        if expires_at and _parse_and_normalize_expiry(expires_at) <= datetime.now(timezone.utc):
             write_audit_event(self.paths.audit_log_path, "get_masked", "expired", secret_id=secret_id)
             return {"expired": True, "expires_at": expires_at, "id": secret_id}
         metadata = json.loads(row["metadata"])
