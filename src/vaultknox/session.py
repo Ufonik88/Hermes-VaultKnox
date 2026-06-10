@@ -61,7 +61,10 @@ class SessionStore:
             state = self._read_unlocked()
             if state is None:
                 return False
-            if datetime.fromisoformat(state.expires_at) <= datetime.now(timezone.utc):
+            expires_at = datetime.fromisoformat(state.expires_at)
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if expires_at <= datetime.now(timezone.utc):
                 self._clear_unlocked()
                 return False
             return True

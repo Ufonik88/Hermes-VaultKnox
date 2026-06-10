@@ -6,7 +6,7 @@ VaultKnox is an encrypted secrets vault designed for Hermes Agent workflows. It 
 
 ## Status
 
-VaultKnox v0.6.0 is stable.
+VaultKnox v0.6.1 is stable.
 
 - Intended use: local development and operator-managed Hermes environments.
 - Review the threat model before deploying in high-risk environments.
@@ -18,8 +18,6 @@ Author: Ufonik
 
 This project is released under the Apache 2.0 license. The code remains copyrighted to Ufonik while permitting public use, modification, and redistribution under that license.
 
-
-## Getting Started
 
 ## Getting Started
 
@@ -94,6 +92,8 @@ Compromise of any sub-key does not expose the master key or any other sub-key's 
 - Backup export and import with integrity signing
 - Audit logging with owner-only permissions and rotation
 - Hermes integration wrapper with write actions disabled by default
+- **v0.6.1** — Public package exports fixed: `from vaultknox import AutonomousSecretsStore` now works as documented
+- **v0.6.1** — Timezone-naive token expiry and lockout timestamps handled safely (extends v0.6.0 expiry fix)
 - **v0.6.0** — MCP Server crash fixed: `Path` import added, dead imports removed, path resolution corrected so `vaultknox_scan` and health tools execute without NameError
 - **v0.6.0** — Generic bearer verification fixed: `_verify_generic_bearer` now registered and usable via `--service generic_bearer`
 - **v0.6.0** — Gateway plugin deployment fixed: `install-hooks` now writes the full `__init__.py` (with `pre_gateway_dispatch`, `pre_llm_call`, `post_llm_call` + `register(ctx)`) instead of only warning
@@ -493,7 +493,7 @@ password mechanics — just behavioural rules.
 
 ## Changelog / What's New
 
-See [CHANGELOG.md](CHANGELOG.md) for the complete version history, including the v0.6.0 security & code-review patch with all critical fixes.
+See [CHANGELOG.md](CHANGELOG.md) for the complete version history, including the v0.6.1 patch release and the v0.6.0 security & code-review fixes.
 
 ## Release Guidance
 

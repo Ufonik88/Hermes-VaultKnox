@@ -398,6 +398,27 @@ def test_bulk_import_validation_error_raises(vault: VaultKnox) -> None:
         vault.bulk_import_secrets("correct horse battery staple", entries)
 
 
+def test_naive_timezone_token_expiry_is_handled_safely(vault: VaultKnox) -> None:
+    vault.initialize("correct horse battery staple")
+    vault.unlock("correct horse battery staple")
+    vault.add_secret(
+        "correct horse battery staple",
+        "api_openai",
+        "api_key",
+        "OpenAI",
+        {"key": "sk-test", "service": "OpenAI", "scope": "full"},
+    )
+    token = vault.issue_token("api_openai", "integration")
+    with vault.db.connection() as conn:
+        conn.execute(
+            "UPDATE vault_tokens SET expires_at = ? WHERE token = ?",
+            ("2000-01-01T00:00:00", token),
+        )
+
+    with pytest.raises(VaultError, match="expired"):
+        vault.consume_token("correct horse battery staple", token)
+
+
 def test_naive_timezone_expiry_is_handled_safely(vault: VaultKnox) -> None:
     vault.initialize("correct horse battery staple")
     vault.unlock("correct horse battery staple")

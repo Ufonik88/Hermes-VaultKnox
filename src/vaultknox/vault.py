@@ -39,9 +39,9 @@ def _safe_env_pop(var_name: str) -> None:
         pass
 
 
-def _parse_and_normalize_expiry(expires_at: str) -> datetime:
+def _parse_utc_datetime(value: str) -> datetime:
     """Parse an ISO 8601 string and ensure it is timezone-aware in UTC if naive."""
-    dt = datetime.fromisoformat(expires_at)
+    dt = datetime.fromisoformat(value)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt
@@ -129,7 +129,7 @@ class VaultKnox:
         key = self._entry_key(password)
         row = self.db.get_secret_row(secret_id)
         expires_at = row["expires_at"] if "expires_at" in row.keys() else None
-        if expires_at and _parse_and_normalize_expiry(expires_at) <= datetime.now(timezone.utc):
+        if expires_at and _parse_utc_datetime(expires_at) <= datetime.now(timezone.utc):
             write_audit_event(self.paths.audit_log_path, "get_raw", "expired", secret_id=secret_id)
             return {"expired": True, "expires_at": expires_at, "id": secret_id}
         encrypted = EncryptedPayload(nonce=row["nonce"], ciphertext=row["data"], tag=row["tag"])
@@ -150,7 +150,7 @@ class VaultKnox:
         self._require_unlocked()
         row = self.db.get_secret_row(secret_id)
         expires_at = row["expires_at"] if "expires_at" in row.keys() else None
-        if expires_at and _parse_and_normalize_expiry(expires_at) <= datetime.now(timezone.utc):
+        if expires_at and _parse_utc_datetime(expires_at) <= datetime.now(timezone.utc):
             write_audit_event(self.paths.audit_log_path, "get_masked", "expired", secret_id=secret_id)
             return {"expired": True, "expires_at": expires_at, "id": secret_id}
         metadata = json.loads(row["metadata"])
@@ -285,7 +285,7 @@ class VaultKnox:
             raise VaultError("Token not found or already used") from None
         if row["used_at"] is not None:
             raise VaultError("Token already used")
-        if datetime.fromisoformat(row["expires_at"]) <= datetime.now(timezone.utc):
+        if _parse_utc_datetime(row["expires_at"]) <= datetime.now(timezone.utc):
             raise VaultError("Token expired")
         secret = self.get_secret(password, row["secret_id"])
         self.db.mark_token_used(token)
@@ -404,7 +404,7 @@ class VaultKnox:
 
     def _check_lockout(self) -> None:
         locked_until = self.db.get_config("locked_until")
-        if locked_until and datetime.fromisoformat(locked_until) > datetime.now(timezone.utc):
+        if locked_until and _parse_utc_datetime(locked_until) > datetime.now(timezone.utc):
             raise VaultError("Vault is temporarily locked after repeated failed attempts")
 
     def _register_failed_attempt(self) -> None:

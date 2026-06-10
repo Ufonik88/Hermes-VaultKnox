@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from vaultknox import __version__
 from vaultknox.config import expand_runtime_path
 
 # ── Default Skill Template ───────────────────────────────────────────────────────
@@ -124,7 +125,7 @@ class SkillGenerator:
         # Generate content
         from datetime import datetime
         content = DEFAULT_SKILL_TEMPLATE.format(
-            version="0.6.0",
+            version=__version__,
             generated_at=datetime.now().isoformat(),
             allowed_services="\n".join(allowed) if allowed else "- (none configured)",
             masked_services="\n".join(masked) if masked else "- (none)",

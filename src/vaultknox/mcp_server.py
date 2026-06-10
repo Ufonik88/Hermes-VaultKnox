@@ -215,18 +215,11 @@ def _create_server() -> Server:
                         "error": "missing_secret_id"
                     }))]
 
-                try:
-                    # Need password for get_secret
-                    # MCP doesn't have master password - return error
-                    return [TextContent(type="text", text=json.dumps({
-                        "error": "requires_master_password",
-                        "message": "Verify requires vault unlock with master password via CLI"
-                    }))]
-                except Exception as e:
-                    return [TextContent(type="text", text=json.dumps({
-                        "error": "verification_failed",
-                        "message": str(e)
-                    }))]
+                # Credential verification needs the master password; MCP has no password channel.
+                return [TextContent(type="text", text=json.dumps({
+                    "error": "requires_master_password",
+                    "message": "Verify requires vault unlock with master password via CLI"
+                }))]
 
             if name == "vaultknox_health":
                 # Run health checks using VaultHealthChecker

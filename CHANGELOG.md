@@ -5,6 +5,24 @@ All notable changes to VaultKnox are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] — 2026-06-10
+
+### Fixed
+
+- **Broken public package exports** — `AutonomousSecretsStore` and `AutonomousSecretsError` were listed in `vaultknox.__all__` but never imported, so `from vaultknox import AutonomousSecretsStore` failed despite being documented in README and `docs/AGENT_INTEGRATION.md`. Both symbols are now exported correctly.
+- **Timezone-naive token and lockout comparisons** — Extended the v0.6.0 expiry normalization to `consume_token` and vault lockout checks so naive ISO timestamps no longer raise `TypeError` when compared against UTC `datetime.now()`.
+- **Session auto-lock with naive timestamps** — `SessionStore.is_unlocked()` now treats naive `expires_at` values as UTC before comparing, preventing a crash if `session.json` is hand-edited or migrated from older data.
+
+### Changed
+
+- **Skill generator version** — `SkillGenerator` now uses `vaultknox.__version__` instead of a hardcoded version string, so generated `SKILL.md` files stay in sync with releases.
+- **MCP verify handler** — Removed a misleading dead `try/except` block; the tool still correctly returns `requires_master_password` because MCP has no password channel.
+
+### Added
+
+- `tests/test_package_exports.py` — guards `__all__` completeness and the documented `from vaultknox import AutonomousSecretsStore` import path.
+- `test_naive_timezone_token_expiry_is_handled_safely` in `tests/test_vault.py`.
+
 ## [0.6.0] — 2026-06-09
 
 ### Fixed (Security & Code Review — v0.5.0 → v0.6.0)
