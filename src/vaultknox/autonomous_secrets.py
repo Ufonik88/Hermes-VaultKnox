@@ -1,7 +1,7 @@
 """
 VaultKnox Autonomous Secrets — Encrypted credential store for Hermes Agent.
 
-Provides AES-256-GCM (Fernet) encrypted credential storage backed by a local key
+Provides versioned encrypted credential storage backed by a local key
 file on disk. Unlike the master-password vault, this store is designed for
 *autonomous* operation: scripts, cron jobs, and tools can read credentials
 without manual unlock — the key file *is* the unlock mechanism.
@@ -11,21 +11,28 @@ Security model (same as SSH private keys):
   2. The encrypted ``secrets.enc`` file is safe for backups, git, and session logs.
   3. If an attacker gains root-level filesystem access, they can read the key file
      and decrypt — this is an accepted trade-off for full autonomy.
+
+Versioned format:
+  - v1: Legacy Fernet (AES-128-CBC + HMAC-SHA256) - read-only support
+  - v2: AES-256-GCM with HKDF key separation - current format
 """
 
 from __future__ import annotations
 
 import json
 import os
+import secrets
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.fernet import Fernet
 
 from vaultknox.config import create_private_dir, write_private_file
-
-
+from vaultknox.core import NONCE_SIZE, KEY_SIZE
 from vaultknox.exceptions import AutonomousSecretsError
 
 
@@ -36,8 +43,8 @@ class AutonomousSecretsStore:
     Directory layout::
 
         ~/.hermes/encrypted-secrets/
-        ├── master.key          # Fernet AES-256 key (chmod 600)
-        └── secrets.enc         # Encrypted JSON blob
+        ├── master.key          # 32-byte key (chmod 600)
+        └── secrets.enc         # Encrypted JSON blob with version header
 
     """
 
@@ -47,6 +54,9 @@ class AutonomousSecretsStore:
 
     # Default suffixes that identify credential env var names.
     CREDENTIAL_SUFFIXES: tuple[str, ...] = ("_KEY", "_TOKEN", "_SECRET", "_PASSWORD", "_CREDENTIALS")
+
+    # Current format version
+    CURRENT_VERSION = 2
 
     def __init__(self, base_dir: str | os.PathLike | None = None) -> None:
         self._base_dir = Path(base_dir) if base_dir else self._find_default_dir()
@@ -78,10 +88,12 @@ class AutonomousSecretsStore:
                 "Use force=True to overwrite."
             )
         create_private_dir(self._base_dir)
-        key = Fernet.generate_key()
+        # Generate a 32-byte key for AES-256-GCM
+        key = secrets.token_bytes(KEY_SIZE)
         write_private_file(self._key_path, key)
-        empty_encrypted = Fernet(key).encrypt(json.dumps({}).encode())
-        write_private_file(self._secrets_path, empty_encrypted)
+        # Write empty v2 store
+        empty_store = self._encrypt_v2(key, {})
+        write_private_file(self._secrets_path, empty_store)
         return f"Initialised autonomous secrets store at {self._base_dir}"
 
     @property
@@ -291,25 +303,111 @@ class AutonomousSecretsStore:
     def _decrypt(self) -> dict[str, str]:
         if not self._secrets_path.exists() or self._secrets_path.stat().st_size == 0:
             return {}
-        key = self._load_key()
-        fernet = Fernet(key)
         raw = self._secrets_path.read_bytes()
         if raw.strip() in (b"{}", b""):
             return {}
+
+        # Check if it's v1 (Fernet) or v2 (AES-256-GCM)
         try:
-            return json.loads(fernet.decrypt(raw))
+            # Try to parse as JSON (v2 format)
+            header = json.loads(raw[:100].decode("utf-8", errors="ignore"))
+            if isinstance(header, dict) and "v" in header:
+                version = header["v"]
+                if version == 2:
+                    return self._decrypt_v2(raw)
+                elif version == 1:
+                    # v1 is legacy Fernet - migrate to v2
+                    return self._migrate_v1_to_v2(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError, KeyError):
+            pass
+
+        # Fallback: assume v1 Fernet format
+        return self._migrate_v1_to_v2(raw)
+
+    def _decrypt_v2(self, raw: bytes) -> dict[str, str]:
+        """Decrypt v2 format (AES-256-GCM with HKDF)."""
+        try:
+            # Parse the full JSON
+            data = json.loads(raw.decode("utf-8"))
+            version = data.get("v", 1)
+            if version != 2:
+                raise AutonomousSecretsError(f"Unsupported version: {version}")
+
+            salt = bytes.fromhex(data["salt"])
+            nonce = bytes.fromhex(data["nonce"])
+            ciphertext = bytes.fromhex(data["ct"])
+
+            key = self._load_key()
+            # Derive encryption key using HKDF
+            hkdf = HKDF(algorithm=hashes.SHA256(), length=KEY_SIZE, salt=salt, info=b"vaultknox-autonomous-v2")
+            enc_key = hkdf.derive(key)
+
+            aesgcm = AESGCM(enc_key)
+            plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+            return json.loads(plaintext.decode("utf-8"))
         except Exception as exc:
             raise AutonomousSecretsError(
-                f"Failed to decrypt secrets store: {exc}. "
+                f"Failed to decrypt v2 secrets store: {exc}. "
                 "The key file may be corrupted."
             ) from exc
 
-    def _encrypt(self, secrets: dict[str, str]) -> None:
+    def _migrate_v1_to_v2(self, raw: bytes) -> dict[str, str]:
+        """Migrate v1 (Fernet) store to v2 (AES-256-GCM)."""
         key = self._load_key()
-        fernet = Fernet(key)
-        plaintext = json.dumps(secrets, indent=2, sort_keys=True).encode()
-        encrypted = fernet.encrypt(plaintext)
+        # For v1, the key file contains a Fernet key
+        # We need to use it to decrypt, then re-encrypt with v2 format
+        try:
+            fernet = Fernet(key)
+            plaintext = fernet.decrypt(raw)
+            secrets = json.loads(plaintext.decode("utf-8"))
+        except Exception as exc:
+            raise AutonomousSecretsError(
+                f"Failed to decrypt v1 secrets store: {exc}. "
+                "The key file may be corrupted."
+            ) from exc
+
+        # Re-encrypt with v2 format using the same key material
+        # Derive a new 32-byte key from the Fernet key for v2
+        hkdf = HKDF(algorithm=hashes.SHA256(), length=KEY_SIZE, salt=None, info=b"vaultknox-autonomous-v2-migration")
+        v2_key = hkdf.derive(key)
+
+        # Write new key file with v2 key
+        write_private_file(self._key_path, v2_key)
+
+        # Encrypt and write v2 store
+        encrypted = self._encrypt_v2(v2_key, secrets)
         write_private_file(self._secrets_path, encrypted)
+
+        return secrets
+
+    def _encrypt(self, secrets: dict[str, str]) -> None:
+        """Encrypt secrets using current version (v2)."""
+        key = self._load_key()
+        encrypted = self._encrypt_v2(key, secrets)
+        write_private_file(self._secrets_path, encrypted)
+
+    def _encrypt_v2(self, key: bytes, secrets: dict[str, str]) -> bytes:
+        """Encrypt secrets using v2 format (AES-256-GCM with HKDF)."""
+        # Generate random salt for HKDF
+        salt = secrets.token_bytes(16)
+        nonce = secrets.token_bytes(NONCE_SIZE)
+
+        # Derive encryption key using HKDF
+        hkdf = HKDF(algorithm=hashes.SHA256(), length=KEY_SIZE, salt=salt, info=b"vaultknox-autonomous-v2")
+        enc_key = hkdf.derive(key)
+
+        plaintext = json.dumps(secrets, separators=(",", ":")).encode("utf-8")
+        aesgcm = AESGCM(enc_key)
+        ciphertext = aesgcm.encrypt(nonce, plaintext, None)
+
+        # Build v2 format
+        data = {
+            "v": 2,
+            "salt": salt.hex(),
+            "nonce": nonce.hex(),
+            "ct": ciphertext.hex(),
+        }
+        return json.dumps(data, separators=(",", ":")).encode("utf-8")
 
     @staticmethod
     def _find_default_dir() -> Path:
