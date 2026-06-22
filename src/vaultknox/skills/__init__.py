@@ -35,14 +35,24 @@ All credential access MUST go through VaultKnox — never hardcode secrets.
 - **ALWAYS** deliver credentials via secure channels (Signal DM, not chat)
 - **ALWAYS** use ephemeral tokens when available
 
+## Token Contract
+
+VaultKnox issues **one-time vault tokens** (format: `vlt_...`) that reference a secret.
+These tokens are **NOT** the provider API key — they are opaque handles that must be
+exchanged for the actual secret via `consume_token`.
+
+- Tokens are single-use and expire after {token_ttl_seconds}s (configurable)
+- Tokens require an unlocked vault session to consume
+- `consume_token` returns the plaintext secret; the token is then deleted
+
 ## Credential Access Pattern
 
 For any operation requiring credentials:
 
 1. Check vault via `vaultknox list` or MCP tool `vaultknox_list`
-2. Get masked credential via `vaultknox get-masked <id>` or `vaultknox_get_metadata`
-3. Use token for environment variable injection (not raw secret)
-4. Never store or log the raw credential
+2. Get masked credential + token via `vaultknox get-masked <id> --purpose <purpose>`
+3. Exchange token for plaintext via `vaultknox consume-token <token>` (requires unlocked session)
+4. Use the plaintext transiently — never store or log it
 
 Example:
 ```
@@ -50,9 +60,18 @@ Example:
 openai_api_key = "sk-xxx"
 
 # Use VaultKnox:
-result = vaultknox_get_metadata(secret_id="openai-api-key")
-# Returns: {id, type, label, token, expires_at}
-os.environ["OPENAI_API_KEY"] = result["token"]
+# 1. Get masked view + token (no plaintext exposed)
+result = vaultknox_get_metadata(secret_id="openai-api-key", purpose="api-call")
+# Returns: {id, type, label, token: "vlt_...", expires_at}
+
+# 2. Consume token to get plaintext (requires unlocked session)
+plaintext = vaultknox_consume_token(token=result["token"])
+# Returns: {id, type, label, payload: {key: "sk-actual-api-key", ...}}
+
+# 3. Use plaintext transiently
+os.environ["OPENAI_API_KEY"] = plaintext["payload"]["key"]
+# ... make API call ...
+del os.environ["OPENAI_API_KEY"]  # Clean up immediately
 ```
 
 ## Allowed Services
