@@ -11,6 +11,9 @@ DEFAULT_MAX_ATTEMPTS = 5
 PRIVATE_FILE_MODE = 0o600
 PRIVATE_DIR_MODE = 0o700
 
+# Re-export from core for DRY
+from vaultknox.core import DEFAULT_KDF_PARAMS
+
 
 @dataclass(slots=True)
 class VaultPaths:

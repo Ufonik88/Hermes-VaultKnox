@@ -29,9 +29,10 @@ from pathlib import Path
 from typing import Any
 
 from vaultknox.config import PRIVATE_FILE_MODE, create_private_dir, set_private_file_permissions, write_private_file
-from vaultknox.core import NONCE_SIZE, derive_master_key, derive_scoped_key, encrypt_payload, generate_salt
+from vaultknox.core import NONCE_SIZE, EncryptedPayload, decrypt_payload, derive_master_key, derive_scoped_key, encrypt_payload, generate_salt
 from vaultknox.db import VaultDatabase
 from vaultknox.exceptions import VaultError
+from vaultknox.types import build_metadata
 
 
 def _backup_filename(vault_dir: Path) -> Path:
@@ -212,33 +213,19 @@ def rotate_master_key(
         rows = db.list_secret_rows_raw()
         decrypted_payloads: list[tuple[str, str, str, dict[str, Any], bytes, bytes, bytes]] = []
         for row in rows:
-            from vaultknox.core import EncryptedPayload, decrypt_payload
-            from vaultknox.types import build_metadata
-
             payload = decrypt_payload(
                 old_entry_key,
                 EncryptedPayload(nonce=row["nonce"], ciphertext=row["data"], tag=row["tag"]),
             )
-            import secrets as _secrets
-
-            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-            new_nonce = _secrets.token_bytes(NONCE_SIZE)
-            new_ciphertext = AESGCM(new_entry_key).encrypt(
-                new_nonce,
-                bytearray(json.dumps(payload, separators=(",", ":")).encode("utf-8")),
-                None,
-            )
-            new_ciphertext_bytes = new_ciphertext[:-16]
-            new_tag = new_ciphertext[-16:]
+            encrypted = encrypt_payload(new_entry_key, payload)
             metadata = build_metadata(row["type"], payload)
             decrypted_payloads.append((
                 row["id"],
                 row["type"],
                 json.dumps(metadata, separators=(",", ":")),
-                new_ciphertext_bytes,
-                new_nonce,
-                new_tag,
+                encrypted.ciphertext,
+                encrypted.nonce,
+                encrypted.tag,
             ))
 
         # Step 4: Atomic write — update salt, verifier, and all secrets

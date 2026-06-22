@@ -14,7 +14,7 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from vaultknox.audit import write_audit_event
-from vaultknox.config import DEFAULT_AUTO_LOCK_MINUTES, DEFAULT_LOCKOUT_MINUTES, DEFAULT_MAX_ATTEMPTS, DEFAULT_TOKEN_TTL_SECONDS, VaultPaths, create_private_dir, set_private_file_permissions, write_private_file
+from vaultknox.config import DEFAULT_AUTO_LOCK_MINUTES, DEFAULT_LOCKOUT_MINUTES, DEFAULT_MAX_ATTEMPTS, DEFAULT_TOKEN_TTL_SECONDS, DEFAULT_KDF_PARAMS, VaultPaths, create_private_dir, set_private_file_permissions, write_private_file
 from vaultknox.core import NONCE_SIZE, EncryptedPayload, decrypt_payload, derive_master_key, derive_scoped_key, encrypt_payload, generate_salt, generate_token
 from vaultknox.db import VaultDatabase
 from vaultknox.exceptions import VaultError
@@ -72,7 +72,7 @@ class VaultKnox:
         verification = encrypt_payload(derive_scoped_key(master_key, b"vaultknox-verifier"), {"ok": True})
         self.db.set_config("vault_version", "1")
         self.db.set_config("argon2_salt", salt.hex())
-        self.db.set_config("kdf_params", json.dumps({"time_cost": 3, "memory_cost": 65536, "parallelism": 4, "hash_len": 32, "type": "argon2id"}, separators=(",", ":")))
+        self.db.set_config("kdf_params", json.dumps(DEFAULT_KDF_PARAMS, separators=(",", ":")))
         self.db.set_config("verifier", json.dumps({"nonce": verification.nonce.hex(), "ciphertext": verification.ciphertext.hex(), "tag": verification.tag.hex()}, separators=(",", ":")))
         self.db.set_config("auto_lock_minutes", str(auto_lock_minutes))
         self.db.set_config("max_attempts", str(max_attempts))
