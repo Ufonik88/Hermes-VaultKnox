@@ -18,6 +18,7 @@ from vaultknox.config import DEFAULT_AUTO_LOCK_MINUTES, DEFAULT_LOCKOUT_MINUTES,
 from vaultknox.core import NONCE_SIZE, EncryptedPayload, decrypt_payload, derive_master_key, derive_scoped_key, encrypt_payload, generate_salt, generate_token
 from vaultknox.db import VaultDatabase
 from vaultknox.exceptions import VaultError
+from vaultknox.passwords import validate_password_strength_or_raise
 from vaultknox.rotation import rotate_master_key
 from vaultknox.session import SessionStore
 from vaultknox.types import build_metadata, masked_view, validate_secret
@@ -63,9 +64,10 @@ class VaultKnox:
         self.db = VaultDatabase(paths.db_path)
         self.sessions = SessionStore(paths.session_path, paths.session_lock_path)
 
-    def initialize(self, password: str, auto_lock_minutes: int = DEFAULT_AUTO_LOCK_MINUTES, max_attempts: int = DEFAULT_MAX_ATTEMPTS, lockout_minutes: int = DEFAULT_LOCKOUT_MINUTES) -> None:
+    def initialize(self, password: str, auto_lock_minutes: int = DEFAULT_AUTO_LOCK_MINUTES, max_attempts: int = DEFAULT_MAX_ATTEMPTS, lockout_minutes: int = DEFAULT_LOCKOUT_MINUTES, skip_password_check: bool = False) -> None:
         if self.paths.db_path.exists():
             raise VaultError("Vault already initialized")
+        validate_password_strength_or_raise(password, skip_password_check)
         self.db.initialize()
         salt = generate_salt()
         master_key = derive_master_key(password, salt)
@@ -250,7 +252,8 @@ class VaultKnox:
         write_audit_event(self.paths.audit_log_path, "import", "success", details={"file": str(import_path)})
         return {"imported_from": str(import_path)}
 
-    def change_password(self, current_password: str, new_password: str) -> None:
+    def change_password(self, current_password: str, new_password: str, skip_password_check: bool = False) -> None:
+        validate_password_strength_or_raise(new_password, skip_password_check)
         result = rotate_master_key(self.db, self.paths.base_dir, current_password, new_password)
         write_audit_event(self.paths.audit_log_path, "change_password", "success", details={"secrets_rotated": result["secrets_rotated"]})
 

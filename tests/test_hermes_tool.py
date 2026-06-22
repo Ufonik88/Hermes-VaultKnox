@@ -6,6 +6,9 @@ from vaultknox.config import expand_runtime_path
 from vaultknox.hermes_tool import vault_tool
 from vaultknox.vault import VaultError, VaultKnox
 
+# Strong test password meeting requirements: 12+ chars, 3+ char classes, 40+ bits entropy
+STRONG_PASSWORD = "CorrectHorse123!"
+
 
 @pytest.fixture()
 def runtime_dir(tmp_path: Path) -> Path:
@@ -14,13 +17,13 @@ def runtime_dir(tmp_path: Path) -> Path:
 
 def test_hermes_wrapper_blocks_write_by_default(runtime_dir: Path) -> None:
     vault = VaultKnox(expand_runtime_path(runtime_dir))
-    vault.initialize("password")
+    vault.initialize(STRONG_PASSWORD)
 
     with pytest.raises(VaultError):
         vault_tool(
             "add",
             runtime_dir=str(runtime_dir),
-            master_password="password",
+            master_password=STRONG_PASSWORD,
             secret_id="note_1",
             secret_type="note",
             label="Note",
@@ -30,14 +33,14 @@ def test_hermes_wrapper_blocks_write_by_default(runtime_dir: Path) -> None:
 
 def test_hermes_wrapper_allows_gated_write(runtime_dir: Path) -> None:
     vault = VaultKnox(expand_runtime_path(runtime_dir))
-    vault.initialize("password")
-    vault.unlock("password")
+    vault.initialize(STRONG_PASSWORD)
+    vault.unlock(STRONG_PASSWORD)
 
     result = vault_tool(
         "add",
         allow_write=True,
         runtime_dir=str(runtime_dir),
-        master_password="password",
+        master_password=STRONG_PASSWORD,
         secret_id="note_1",
         secret_type="note",
         label="Note",
@@ -51,44 +54,44 @@ def test_hermes_wrapper_allows_gated_write(runtime_dir: Path) -> None:
 
 def test_consume_token_via_hermes(runtime_dir: Path) -> None:
     vault = VaultKnox(expand_runtime_path(runtime_dir))
-    vault.initialize("password")
-    vault.unlock("password")
-    vault.add_secret("password", "note_1", "note", "Test Note", {"content": "secret content"})
+    vault.initialize(STRONG_PASSWORD)
+    vault.unlock(STRONG_PASSWORD)
+    vault.add_secret(STRONG_PASSWORD, "note_1", "note", "Test Note", {"content": "secret content"})
     token = vault.issue_token("note_1", "test")
 
-    result = vault_tool("consume_token", runtime_dir=str(runtime_dir), master_password="password", token=token)
+    result = vault_tool("consume_token", runtime_dir=str(runtime_dir), master_password=STRONG_PASSWORD, token=token)
 
     assert result["payload"]["content"] == "secret content"
 
 
 def test_consume_token_already_used_raises(runtime_dir: Path) -> None:
     vault = VaultKnox(expand_runtime_path(runtime_dir))
-    vault.initialize("password")
-    vault.unlock("password")
-    vault.add_secret("password", "note_1", "note", "Test Note", {"content": "secret content"})
+    vault.initialize(STRONG_PASSWORD)
+    vault.unlock(STRONG_PASSWORD)
+    vault.add_secret(STRONG_PASSWORD, "note_1", "note", "Test Note", {"content": "secret content"})
     token = vault.issue_token("note_1", "test")
-    vault_tool("consume_token", runtime_dir=str(runtime_dir), master_password="password", token=token)
+    vault_tool("consume_token", runtime_dir=str(runtime_dir), master_password=STRONG_PASSWORD, token=token)
 
     with pytest.raises(VaultError):
-        vault_tool("consume_token", runtime_dir=str(runtime_dir), master_password="password", token=token)
+        vault_tool("consume_token", runtime_dir=str(runtime_dir), master_password=STRONG_PASSWORD, token=token)
 
 
 def test_revoke_token_via_hermes_blocks_consume(runtime_dir: Path) -> None:
     vault = VaultKnox(expand_runtime_path(runtime_dir))
-    vault.initialize("password")
-    vault.unlock("password")
-    vault.add_secret("password", "note_1", "note", "Test Note", {"content": "secret content"})
+    vault.initialize(STRONG_PASSWORD)
+    vault.unlock(STRONG_PASSWORD)
+    vault.add_secret(STRONG_PASSWORD, "note_1", "note", "Test Note", {"content": "secret content"})
     token = vault.issue_token("note_1", "test")
-    vault_tool("revoke_token", allow_write=True, runtime_dir=str(runtime_dir), master_password="password", token=token)
+    vault_tool("revoke_token", allow_write=True, runtime_dir=str(runtime_dir), master_password=STRONG_PASSWORD, token=token)
 
     with pytest.raises(VaultError, match="revoked"):
-        vault_tool("consume_token", runtime_dir=str(runtime_dir), master_password="password", token=token)
+        vault_tool("consume_token", runtime_dir=str(runtime_dir), master_password=STRONG_PASSWORD, token=token)
 
 
 def test_sensitive_action_requires_master_password(runtime_dir: Path) -> None:
     vault = VaultKnox(expand_runtime_path(runtime_dir))
-    vault.initialize("password")
-    vault.unlock("password")
+    vault.initialize(STRONG_PASSWORD)
+    vault.unlock(STRONG_PASSWORD)
 
     with pytest.raises(VaultError, match="requires master_password"):
         vault_tool(

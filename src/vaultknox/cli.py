@@ -171,12 +171,13 @@ def oauth_login(obj: dict[str, VaultKnox], provider: str, client_id: str, client
 
 @main.command()
 @click.option("--auto-lock-minutes", default=15, show_default=True, type=int)
+@click.option("--no-password-check", is_flag=True, default=False, help="Skip password strength validation.")
 @click.pass_obj
-def init(obj: dict[str, VaultKnox], auto_lock_minutes: int) -> None:
+def init(obj: dict[str, VaultKnox], auto_lock_minutes: int, no_password_check: bool) -> None:
     """Initialize a new vault with a master password."""
     vault = obj["vault"]
     password = _prompt_password(confirm=True)
-    vault.initialize(password, auto_lock_minutes=auto_lock_minutes)
+    vault.initialize(password, auto_lock_minutes=auto_lock_minutes, skip_password_check=no_password_check)
     click.echo("Vault initialized")
 
 
@@ -300,12 +301,13 @@ def import_command(obj: dict[str, VaultKnox], file_path: str, force: bool) -> No
 
 
 @main.command("change-password")
+@click.option("--no-password-check", is_flag=True, default=False, help="Skip password strength validation.")
 @click.pass_obj
-def change_password(obj: dict[str, VaultKnox]) -> None:
+def change_password(obj: dict[str, VaultKnox], no_password_check: bool) -> None:
     vault = obj["vault"]
     current = click.prompt("Current master password", hide_input=True)
     new_password = click.prompt("New master password", hide_input=True, confirmation_prompt=True)
-    vault.change_password(current, new_password)
+    vault.change_password(current, new_password, skip_password_check=no_password_check)
     click.echo("Master password changed")
 
 
