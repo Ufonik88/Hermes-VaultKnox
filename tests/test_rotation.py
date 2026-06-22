@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from vaultknox.config import expand_runtime_path
+from vaultknox.exceptions import VaultError
 from vaultknox.rotation import (
     _backup_filename,
     _create_pre_rotation_backup,
@@ -27,7 +28,7 @@ from vaultknox.rotation import (
     list_pre_rotation_backups,
     rotate_master_key,
 )
-from vaultknox.vault import VaultError, VaultKnox
+from vaultknox.vault import VaultKnox
 
 # Placeholder passwords (20+ chars for Argon2id compatibility)
 OLD_PASSWORD = "old-password-1234567890"

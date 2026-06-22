@@ -31,7 +31,7 @@ from typing import Any
 from vaultknox.config import PRIVATE_FILE_MODE, set_private_file_permissions
 from vaultknox.core import NONCE_SIZE, derive_master_key, derive_scoped_key, encrypt_payload, generate_salt
 from vaultknox.db import VaultDatabase
-from vaultknox.vault import VaultError
+from vaultknox.exceptions import VaultError
 
 
 def _backup_filename(vault_dir: Path) -> Path:

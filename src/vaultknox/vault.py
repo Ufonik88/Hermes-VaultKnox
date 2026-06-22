@@ -17,6 +17,8 @@ from vaultknox.audit import write_audit_event
 from vaultknox.config import DEFAULT_AUTO_LOCK_MINUTES, DEFAULT_LOCKOUT_MINUTES, DEFAULT_MAX_ATTEMPTS, DEFAULT_TOKEN_TTL_SECONDS, VaultPaths, set_private_file_permissions
 from vaultknox.core import NONCE_SIZE, EncryptedPayload, decrypt_payload, derive_master_key, derive_scoped_key, encrypt_payload, generate_salt, generate_token
 from vaultknox.db import VaultDatabase
+from vaultknox.exceptions import VaultError
+from vaultknox.rotation import rotate_master_key
 from vaultknox.session import SessionStore
 from vaultknox.types import build_metadata, masked_view, validate_secret
 
@@ -45,10 +47,6 @@ def _parse_utc_datetime(value: str) -> datetime:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt
-
-
-class VaultError(RuntimeError):
-    pass
 
 
 @dataclass(slots=True)
@@ -254,27 +252,8 @@ class VaultKnox:
         return {"imported_from": str(import_path)}
 
     def change_password(self, current_password: str, new_password: str) -> None:
-        old_key = self._entry_key(current_password)
-        rows = self.db.list_secret_rows_raw()
-        decrypted_payloads: list[tuple[str, str, dict[str, Any]]] = []
-        for row in rows:
-            payload = decrypt_payload(old_key, EncryptedPayload(nonce=row["nonce"], ciphertext=row["data"], tag=row["tag"]))
-            decrypted_payloads.append((row["id"], row["type"], payload))
-
-        new_salt = generate_salt()
-        new_master_key = derive_master_key(new_password, new_salt)
-        new_entry_key = derive_scoped_key(new_master_key)
-        verifier = encrypt_payload(derive_scoped_key(new_master_key, b"vaultknox-verifier"), {"ok": True})
-
-        self.db.set_config("argon2_salt", new_salt.hex())
-        self.db.set_config("verifier", json.dumps({"nonce": verifier.nonce.hex(), "ciphertext": verifier.ciphertext.hex(), "tag": verifier.tag.hex()}, separators=(",", ":")))
-
-        for secret_id, secret_type, payload in decrypted_payloads:
-            reencrypted = encrypt_payload(new_entry_key, payload)
-            metadata = build_metadata(secret_type, payload)
-            self.db.update_secret_crypto(secret_id, reencrypted.ciphertext, reencrypted.nonce, reencrypted.tag, metadata)
-
-        write_audit_event(self.paths.audit_log_path, "change_password", "success")
+        result = rotate_master_key(self.db, self.paths.base_dir, current_password, new_password)
+        write_audit_event(self.paths.audit_log_path, "change_password", "success", details={"secrets_rotated": result["secrets_rotated"]})
 
     def consume_token(self, password: str, token: str) -> dict[str, Any]:
         if self.db.is_token_revoked(token):

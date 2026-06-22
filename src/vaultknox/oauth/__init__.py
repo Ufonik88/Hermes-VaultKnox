@@ -67,32 +67,7 @@ def verify_state(provided: str, expected: str) -> bool:
     return secrets.compare_digest(provided, expected)
 
 
-# ── OAuth Errors ────────────────────────────────────────────────────────────────
-
-
-class OAuthError(Exception):
-    """Base exception for OAuth errors."""
-    pass
-
-
-class OAuthTimeout(OAuthError):
-    """Callback timed out."""
-    pass
-
-
-class OAuthDenied(OAuthError):
-    """User denied authorization."""
-    pass
-
-
-class OAuthStateMismatch(OAuthError):
-    """CSRF state mismatch."""
-    pass
-
-
-class OAuthTokenError(OAuthError):
-    """Token exchange failed."""
-    pass
+from vaultknox.exceptions import OAuthError, OAuthTimeout, OAuthDenied, OAuthStateMismatch, OAuthTokenError
 
 
 # ── OAuth Providers ────────────────────────────────────────────────────────────────

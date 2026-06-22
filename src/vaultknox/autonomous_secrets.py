@@ -24,8 +24,7 @@ from typing import Any
 from cryptography.fernet import Fernet
 
 
-class AutonomousSecretsError(Exception):
-    """Raised when an autonomous secrets operation fails."""
+from vaultknox.exceptions import AutonomousSecretsError
 
 
 class AutonomousSecretsStore:
