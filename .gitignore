@@ -30,6 +30,8 @@ encrypted-secrets/master.key
 MASTER_TODO.md
 VAULT_IMPROVE.md
 hermes-vaultknox-plan.md
+=*
+*.pr-body.md
 
 # IDE / OS
 .DS_Store
