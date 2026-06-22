@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Iterator
 
 from vaultknox.config import create_private_dir, set_private_file_permissions, write_private_file
-from vaultknox.core import KEY_SIZE, derive_scoped_key
 
 
 @dataclass(frozen=True, slots=True)

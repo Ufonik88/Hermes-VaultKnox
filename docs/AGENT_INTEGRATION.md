@@ -34,7 +34,7 @@ This writes `~/.hermes/hooks/secret-guard/handler.py` and `HOOK.yaml`, which use
 
 > **v0.6.0 fix:** Earlier versions only warned if the gateway plugin `__init__.py` was missing or outdated but never wrote it. `install-hooks` now **always writes** a complete, standalone `__init__.py` implementing all three hooks (`pre_gateway_dispatch`, `pre_llm_call`, `post_llm_call`) and a `register(ctx)` helper. Run `vaultknox install-hooks` after upgrading to v0.6.0 to ensure the plugin is up to date.
 
-> **v0.6.1 fix:** `from vaultknox import AutonomousSecretsStore` now works as documented below. Earlier v0.6.0 listed the symbol in `__all__` but did not export it.
+> **v0.7.0 note:** `from vaultknox import AutonomousSecretsStore` remains supported, and policy/session-key enforcement is now active on agent tool paths.
 
 ### 2b. Proactive Protection (v0.4.2+)
 

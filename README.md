@@ -6,7 +6,7 @@ VaultKnox is an encrypted secrets vault designed for Hermes Agent workflows. It 
 
 ## Status
 
-VaultKnox v0.6.1 is stable.
+VaultKnox v0.7.0 is in **alpha** (Development Status :: 3 - Alpha).
 
 - Intended use: local development and operator-managed Hermes environments.
 - Review the threat model before deploying in high-risk environments.
@@ -85,13 +85,18 @@ Compromise of any sub-key does not expose the master key or any other sub-key's 
 
 ## Features
 
-- AES-256-GCM encryption for stored secret payloads
+- AES-256-GCM encryption for master vault secret payloads; Fernet (AES-128-CBC + HMAC-SHA256) for autonomous store
 - SQLite-backed local vault storage
 - Masked secret retrieval for agent-safe responses
 - One-time token issuance for downstream automation
 - Backup export and import with integrity signing
 - Audit logging with owner-only permissions and rotation
 - Hermes integration wrapper with write actions disabled by default
+- **v0.7.0** — Session-derived key flow completed for agent paths: operator unlock establishes session key, and agent actions no longer require `master_password`
+- **v0.7.0** — Policy Engine v2 is now enforced in `vault_tool` and MCP access paths with deny-by-default, service/action checks, capability gates, and token TTL clamping
+- **v0.7.0** — OAuth secrets now auto-refresh on read when near expiry, with safe failure fallback (`refresh_failed`) and no token logging
+- **v0.7.0** — Dashboard hardening: token TTL enforcement, HttpOnly cookie/Authorization support, no `?token=` for API calls after bootstrap, and hardened response headers
+- **v0.7.0** — Detector/scanner improvements: added Google API key, GCP key material, Azure connection string, JWT, and high-entropy assignment detection with entropy gating + placeholder allowlist
 - **v0.6.1** — Public package exports fixed: `from vaultknox import AutonomousSecretsStore` now works as documented
 - **v0.6.1** — Timezone-naive token expiry and lockout timestamps handled safely (extends v0.6.0 expiry fix)
 - **v0.6.0** — MCP Server crash fixed: `Path` import added, dead imports removed, path resolution corrected so `vaultknox_scan` and health tools execute without NameError
@@ -184,7 +189,7 @@ Default runtime files are stored under `~/.hermes/`:
 - `~/.hermes/encrypted-secrets/` — autonomous key-file-backed encrypted store (recommended)
 
 The `encrypted-secrets/` directory contains:
-- `master.key` — AES-256 key (chmod 600, never in logs)
+- `master.key` — Fernet key (AES-128-CBC + HMAC-SHA256, chmod 600, never in logs)
 - `secrets.enc` — encrypted JSON blob (safe for backups/git)
 
 - `secrets.db`: encrypted SQLite vault database
@@ -259,6 +264,13 @@ src/vaultknox/
 ├── verifier.py              # Live credential verification against provider APIs
 ├── health.py                # Vault health checks (DB, permissions, integrity)
 ├── autonomous_secrets.py    # Key-file-backed autonomous secrets store
+├── dashboard.py             # Local token-guarded web console
+├── mcp_server.py            # MCP stdio transport for agent integration
+├── policy.py                # Per-agent, per-service policy engine
+├── oauth/                   # OAuth PKCE flow + token refresh
+│   └── __init__.py
+├── skills/                  # SKILL.md generation for sub-agents
+│   └── __init__.py
 └── branding.py              # Logo and CLI banner assets
 ```
 
@@ -290,7 +302,7 @@ prompt — scripts and cron jobs can read credentials without human intervention
 VaultKnox Autonomous Secrets uses a **key-file-backed security model** similar to SSH keys:
 
 - **Key file**: `~/.hermes/encrypted-secrets/master.key` (chmod 600, owner-only)
-- **Encryption**: AES-256-GCM with unique random nonces per encryption
+- **Encryption**: Fernet (AES-128-CBC + HMAC-SHA256) with unique random nonces per encryption
 - **Storage**: `secrets.enc` contains the encrypted credentials — safe for backups, git, and session logs
 - **Threat model**: An attacker with root access to the filesystem can decrypt the secrets. This is the accepted trade-off for full autonomy without manual password prompts.
 - **Operational security**: The key file must never appear in session transcripts, memory, or tool output. Ensure proper file permissions (chmod 600) and protect the key file like an SSH private key.
@@ -372,7 +384,7 @@ even if the `.env` file is accidentally exposed.
 
 ```text
 ~/.hermes/encrypted-secrets/
-├── master.key          # Fernet AES-256 key (chmod 600, owner-only)
+├── master.key          # Fernet key (AES-128-CBC + HMAC-SHA256, chmod 600, owner-only)
 └── secrets.enc         # Encrypted JSON blob (safe for backups/git)
 
 src/vaultknox/
@@ -493,7 +505,7 @@ password mechanics — just behavioural rules.
 
 ## Changelog / What's New
 
-See [CHANGELOG.md](CHANGELOG.md) for the complete version history, including the v0.6.1 patch release and the v0.6.0 security & code-review fixes.
+See [CHANGELOG.md](CHANGELOG.md) for the complete version history, including the v0.7.0 hardening release.
 
 ## Release Guidance
 
@@ -501,4 +513,3 @@ Before treating VaultKnox as broadly usable:
 
 1. Verify no secrets or local vault files are committed.
 2. Review the [Hermes write-gate operations guide](docs/hermes-write-gate-operations.md) before enabling write access for Hermes.
-

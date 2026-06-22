@@ -16,13 +16,14 @@ Usage:
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, NamedTuple
 
-from vaultknox.detectors import DETECTORS, Detector
+from vaultknox.detectors import DETECTORS, PLACEHOLDER_ALLOWLIST, Detector
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -160,11 +161,13 @@ class SecretScanner:
         detectors: list[Detector] | None = None,
         max_bytes_per_file: int = MAX_BYTES_PER_FILE,
         max_line_length: int = MAX_LINE_LENGTH,
+        entropy_threshold: float = 3.5,
     ) -> None:
         self.paths = paths or DEFAULT_SCAN_PATHS
         self.detectors = detectors or DETECTORS
         self.max_bytes_per_file = max_bytes_per_file
         self.max_line_length = max_line_length
+        self.entropy_threshold = entropy_threshold
         # Track seen fingerprints to detect duplicates
         self._seen_fingerprints: dict[str, list[str]] = {}  # fingerprint -> [file_path, ...]
         self._stats = ScanStats(
@@ -248,6 +251,13 @@ class SecretScanner:
                     continue
 
                 secret_value = match.group(0)
+                if detector.name == "High Entropy Secret Assignment":
+                    candidate = _extract_assignment_value(secret_value)
+                    lowered = candidate.lower()
+                    if any(word in lowered for word in PLACEHOLDER_ALLOWLIST):
+                        continue
+                    if candidate and _shannon_entropy(candidate) < self.entropy_threshold:
+                        continue
                 fingerprint = _fingerprint(secret_value)
 
                 # Record fingerprint for duplicate detection
@@ -314,6 +324,28 @@ def _walk_with_skip(root: Path) -> Iterator[Path]:
 def _fingerprint(secret: str) -> str:
     """Compute a SHA-256 fingerprint of a secret value for duplicate detection."""
     return hashlib.sha256(secret.encode("utf-8"), usedforsecurity=True).hexdigest()
+
+
+def _extract_assignment_value(text: str) -> str:
+    """Extract assigned value from key=value/key: value style strings."""
+    for sep in ("=", ":"):
+        if sep in text:
+            return text.split(sep, 1)[1].strip().strip("'\"")
+    return text.strip().strip("'\"")
+
+
+def _shannon_entropy(value: str) -> float:
+    if not value:
+        return 0.0
+    freq: dict[str, int] = {}
+    for ch in value:
+        freq[ch] = freq.get(ch, 0) + 1
+    length = len(value)
+    entropy = 0.0
+    for count in freq.values():
+        p = count / length
+        entropy -= p * math.log2(p)
+    return entropy
 
 
 # ---------------------------------------------------------------------------

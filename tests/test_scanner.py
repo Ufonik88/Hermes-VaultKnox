@@ -13,6 +13,7 @@ from vaultknox.scanner import (
     SecretScanner,
     _fingerprint,
     _severity_rank,
+    _shannon_entropy,
     check_file_permissions,
 )
 
@@ -152,6 +153,18 @@ class TestDetectorRegistry:
         d = detectors_module.get_detector("Bearer Token")
         assert d is not None
         match = d.pattern.search("Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2F1dGguc2VydmljZSJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c")
+        assert match is not None
+
+    def test_google_api_key_pattern_matches(self) -> None:
+        d = detectors_module.get_detector("Google API Key")
+        assert d is not None
+        match = d.pattern.search("AIzaSyDUMMYDUMMYDUMMYDUMMYDUMMYDUMMY123")
+        assert match is not None
+
+    def test_jwt_pattern_matches(self) -> None:
+        d = detectors_module.get_detector("JWT Token")
+        assert d is not None
+        match = d.pattern.search("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTYifQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c")
         assert match is not None
 
 
@@ -301,6 +314,20 @@ class TestSecretScannerSingleFile:
         # No findings since the line content doesn't match any secret pattern.
         assert len(findings) == 0
 
+    def test_entropy_gate_reduces_false_positive_for_generic_entropy_detector(self, tmp_path: Path) -> None:
+        env_file = tmp_path / ".env"
+        _write_file(env_file, "SECRET=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n")
+        scanner = SecretScanner(paths=[env_file], entropy_threshold=3.5)
+        findings, _, _ = scanner.scan()
+        assert all(f.detector_name != "High Entropy Secret Assignment" for f in findings)
+
+    def test_placeholder_allowlist_skips_placeholder_values(self, tmp_path: Path) -> None:
+        env_file = tmp_path / ".env"
+        _write_file(env_file, "API_KEY=your-key-here\n")
+        scanner = SecretScanner(paths=[env_file])
+        findings, _, _ = scanner.scan()
+        assert len(findings) == 0
+
     def test_fingerprint_deterministic_across_files(self, tmp_path: Path) -> None:
         env1 = tmp_path / "a.env"
         env2 = tmp_path / "b.env"
@@ -448,6 +475,13 @@ class TestLargeFileStreaming:
 
         assert len(findings) == 1
         assert findings[0].detector_name == "OpenAI API Key"
+
+
+class TestEntropyHelpers:
+    def test_shannon_entropy_higher_for_random_like_string(self) -> None:
+        low = _shannon_entropy("aaaaaaaaaaaaaaaaaaaaaaaa")
+        high = _shannon_entropy("a8Z_1pQx9LmN2wVt5YkR3sHj")
+        assert high > low
 
 
 # ---------------------------------------------------------------------------

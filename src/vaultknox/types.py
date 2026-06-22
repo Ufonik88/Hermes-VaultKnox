@@ -70,6 +70,14 @@ def build_metadata(secret_type: str, payload: dict[str, Any]) -> dict[str, Any]:
         }
     if secret_type == "password":
         return {}
+    if secret_type == "oauth":
+        metadata = {}
+        provider_id = payload.get("provider_id")
+        if isinstance(provider_id, str) and provider_id:
+            metadata["service"] = provider_id
+        if payload.get("expires_at"):
+            metadata["expires_at"] = payload.get("expires_at")
+        return metadata
     return {"kind": "note"}
 
 

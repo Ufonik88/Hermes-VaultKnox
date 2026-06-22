@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import logging
 import secrets
+from datetime import datetime, timedelta, timezone
+from http.cookies import SimpleCookie
 from typing import Any
 
 import click
@@ -124,14 +126,18 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
             </div>
         </div>
     </div>
-    <div class="footer">
-        VaultKnox Dashboard v{{version}} • Token expires in 1 hour
+    <div class="footer" id="footerTtl">
+        VaultKnox Dashboard v{{version}} • Token expires in --s
     </div>
     <script>
-        const token = new URLSearchParams(window.location.search).get('token');
+        const bootstrapToken = new URLSearchParams(window.location.search).get('token');
         
         async function api(endpoint) {
-            const resp = await fetch('/api/' + endpoint + '?token=' + token);
+            const headers = {};
+            if (bootstrapToken) {
+                headers['Authorization'] = 'Bearer ' + bootstrapToken;
+            }
+            const resp = await fetch('/api/' + endpoint, { headers });
             return resp.json();
         }
         
@@ -151,6 +157,9 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
             });
             document.getElementById('initStatus').textContent = 'yes';
             document.getElementById('unlockStatus').textContent = data.unlocked ? 'yes' : 'no';
+            if (typeof data.token_ttl_remaining_seconds === 'number') {
+                document.getElementById('footerTtl').textContent = 'VaultKnox Dashboard v{{version}} • Token expires in ' + data.token_ttl_remaining_seconds + 's';
+            }
             
             const tbody = document.querySelector('#healthTable tbody');
             tbody.innerHTML = checks.map(c => '<tr><td>' + c.name + '</td><td><span class="badge">' + c.status + '</span></td><td>' + (c.message || '') + '</td></tr>').join('');
@@ -228,7 +237,21 @@ class DashboardServer:
         self.host = host
         self.port = port
         self.token = _generate_token()
+        self.issued_at = datetime.now(timezone.utc)
+        self.token_ttl_seconds = 3600
         self.vault = VaultKnox(expand_runtime_path())
+
+    def _remaining_token_ttl_seconds(self) -> int:
+        expires = self.issued_at + timedelta(seconds=self.token_ttl_seconds)
+        remaining = int((expires - datetime.now(timezone.utc)).total_seconds())
+        return max(0, remaining)
+
+    def _is_token_valid(self, candidate: str) -> bool:
+        if not candidate:
+            return False
+        if self._remaining_token_ttl_seconds() <= 0:
+            return False
+        return _verify_token(candidate, self.token)
         
     def _get_status(self) -> dict[str, Any]:
         """Get vault status."""
@@ -255,6 +278,7 @@ class DashboardServer:
             "overall_status": report.overall_status,
             "unlocked": status["unlocked"],
             "secret_count": status["secret_count"],
+            "token_ttl_remaining_seconds": self._remaining_token_ttl_seconds(),
             "findings": [{"name": c.name, "status": c.status.value, "message": c.message or ""} for c in report.checks],
         }
     
@@ -325,19 +349,54 @@ class DashboardServer:
         DashboardServer._instance = self
         
         class Handler(http.server.BaseHTTPRequestHandler):
+            def _set_common_headers(self) -> None:
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+
+            def _read_auth_token(self) -> str:
+                auth = self.headers.get("Authorization", "")
+                if auth.lower().startswith("bearer "):
+                    return auth[7:]
+                cookie_header = self.headers.get("Cookie", "")
+                cookie = SimpleCookie()
+                cookie.load(cookie_header)
+                morsel = cookie.get("vaultknox_token")
+                if morsel:
+                    return morsel.value
+                return ""
+
             def do_GET(self):
                 parsed = urlparse(self.path)
                 qs = parse_qs(parsed.query)
 
-                # Check token - reject if missing OR invalid
-                token = qs.get("token", [""])[0]
-                if not token or not _verify_token(token, DashboardServer._instance.token):
+                # Bootstrap path: allow query token once to set HttpOnly cookie.
+                if parsed.path == "/":
+                    bootstrap_token = qs.get("token", [""])[0]
+                    if bootstrap_token:
+                        if not DashboardServer._instance._is_token_valid(bootstrap_token):
+                            self.send_error(401, "Unauthorized")
+                            return
+                        self.send_response(200)
+                        self.send_header("Content-Type", "text/html")
+                        self.send_header("Set-Cookie", f"vaultknox_token={bootstrap_token}; HttpOnly; Path=/; SameSite=Strict")
+                        self._set_common_headers()
+                        self.end_headers()
+                        self.wfile.write(_DASHBOARD_HTML.encode())
+                        return
+
+                token = self._read_auth_token()
+                if not DashboardServer._instance._is_token_valid(token):
+                    self.send_error(401, "Unauthorized")
+                    return
+
+                if parsed.path.startswith("/api/") and qs.get("token"):
                     self.send_error(401, "Unauthorized")
                     return
 
                 if parsed.path == "/api/health":
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
+                    self._set_common_headers()
                     self.end_headers()
                     self.wfile.write(json.dumps(DashboardServer._instance._get_health()).encode())
                     return
@@ -345,6 +404,7 @@ class DashboardServer:
                 if parsed.path == "/api/credentials":
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
+                    self._set_common_headers()
                     self.end_headers()
                     self.wfile.write(json.dumps(DashboardServer._instance._get_credentials()).encode())
                     return
@@ -352,6 +412,7 @@ class DashboardServer:
                 if parsed.path == "/api/audit":
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
+                    self._set_common_headers()
                     self.end_headers()
                     self.wfile.write(json.dumps(DashboardServer._instance._get_audit()).encode())
                     return
@@ -359,6 +420,7 @@ class DashboardServer:
                 if parsed.path == "/api/scan":
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
+                    self._set_common_headers()
                     self.end_headers()
                     self.wfile.write(json.dumps(DashboardServer._instance._get_scan()).encode())
                     return
@@ -366,6 +428,7 @@ class DashboardServer:
                 # Serve dashboard HTML
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html")
+                self._set_common_headers()
                 self.end_headers()
                 self.wfile.write(_DASHBOARD_HTML.encode())
             

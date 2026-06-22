@@ -14,10 +14,30 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from vaultknox.audit import write_audit_event
-from vaultknox.config import DEFAULT_AUTO_LOCK_MINUTES, DEFAULT_LOCKOUT_MINUTES, DEFAULT_MAX_ATTEMPTS, DEFAULT_TOKEN_TTL_SECONDS, DEFAULT_KDF_PARAMS, VaultPaths, create_private_dir, set_private_file_permissions, write_private_file
-from vaultknox.core import NONCE_SIZE, EncryptedPayload, decrypt_payload, derive_master_key, derive_scoped_key, encrypt_payload, generate_salt, generate_token
+from vaultknox.config import (
+    DEFAULT_AUTO_LOCK_MINUTES,
+    DEFAULT_KDF_PARAMS,
+    DEFAULT_LOCKOUT_MINUTES,
+    DEFAULT_MAX_ATTEMPTS,
+    DEFAULT_TOKEN_TTL_SECONDS,
+    VaultPaths,
+    create_private_dir,
+    set_private_file_permissions,
+    write_private_file,
+)
+from vaultknox.core import (
+    NONCE_SIZE,
+    EncryptedPayload,
+    decrypt_payload,
+    derive_master_key,
+    derive_scoped_key,
+    encrypt_payload,
+    generate_salt,
+    generate_token,
+)
 from vaultknox.db import VaultDatabase
 from vaultknox.exceptions import VaultError
+from vaultknox.oauth import DEFAULT_PROVIDERS, OAuthTokenError, StoredOAuth, refresh_access_token
 from vaultknox.passwords import validate_password_strength_or_raise
 from vaultknox.rotation import rotate_master_key
 from vaultknox.session import SessionStore
@@ -64,7 +84,14 @@ class VaultKnox:
         self.db = VaultDatabase(paths.db_path)
         self.sessions = SessionStore(paths.session_path, paths.session_lock_path, paths.session_path.with_name("session.key"))
 
-    def initialize(self, password: str, auto_lock_minutes: int = DEFAULT_AUTO_LOCK_MINUTES, max_attempts: int = DEFAULT_MAX_ATTEMPTS, lockout_minutes: int = DEFAULT_LOCKOUT_MINUTES, skip_password_check: bool = False) -> None:
+    def initialize(
+        self,
+        password: str,
+        auto_lock_minutes: int = DEFAULT_AUTO_LOCK_MINUTES,
+        max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+        lockout_minutes: int = DEFAULT_LOCKOUT_MINUTES,
+        skip_password_check: bool = False,
+    ) -> None:
         if self.paths.db_path.exists():
             raise VaultError("Vault already initialized")
         validate_password_strength_or_raise(password, skip_password_check)
@@ -143,12 +170,56 @@ class VaultKnox:
             write_audit_event(self.paths.audit_log_path, "get_raw", "failure", secret_id=secret_id)
             raise VaultError("Secret decryption failed; data may be corrupted") from exc
         write_audit_event(self.paths.audit_log_path, "get_raw", "success", secret_id=secret_id)
+        if row["type"] == "oauth":
+            secret = self._maybe_refresh_oauth_secret(key, row, secret)
         return {
             "id": row["id"],
             "type": row["type"],
             "label": row["label"],
             "payload": secret,
         }
+
+    def _maybe_refresh_oauth_secret(self, key: bytes, row: Any, payload: dict[str, Any]) -> dict[str, Any]:
+        """Refresh OAuth tokens on read when near expiry and credentials are present."""
+        try:
+            oauth_secret = StoredOAuth.from_payload(str(row["id"]), str(row["label"]), payload)
+        except Exception:
+            return payload
+
+        if not oauth_secret.needs_refresh:
+            return payload
+
+        provider = DEFAULT_PROVIDERS.get(oauth_secret.provider_id)
+        client_id = payload.get("client_id")
+        client_secret = payload.get("client_secret")
+        refresh_token_value = oauth_secret.refresh_token
+
+        if not provider or not isinstance(client_id, str) or not isinstance(client_secret, str) or not refresh_token_value:
+            return payload
+
+        try:
+            refreshed = refresh_access_token(
+                refresh_token=refresh_token_value,
+                client_id=client_id,
+                client_secret=client_secret,
+                token_url=provider.token_url,
+            )
+            new_payload = dict(payload)
+            new_payload["access_token"] = refreshed.access_token
+            new_payload["token_type"] = refreshed.token_type
+            new_payload["refresh_token"] = refreshed.refresh_token or refresh_token_value
+            if refreshed.expires_in:
+                new_payload["expires_at"] = (datetime.now(timezone.utc) + timedelta(seconds=refreshed.expires_in)).isoformat()
+            encrypted = encrypt_payload(key, new_payload)
+            metadata = build_metadata("oauth", new_payload)
+            self.db.update_secret_crypto(str(row["id"]), encrypted.ciphertext, encrypted.nonce, encrypted.tag, metadata)
+            write_audit_event(self.paths.audit_log_path, "oauth_refresh", "success", secret_id=str(row["id"]))
+            return new_payload
+        except OAuthTokenError:
+            failed_payload = dict(payload)
+            failed_payload["refresh_failed"] = True
+            write_audit_event(self.paths.audit_log_path, "oauth_refresh", "failure", secret_id=str(row["id"]))
+            return failed_payload
 
     def get_masked(self, secret_id: str, purpose: str | None = None, token_ttl_seconds: int = DEFAULT_TOKEN_TTL_SECONDS) -> dict[str, Any]:
         self._require_unlocked()

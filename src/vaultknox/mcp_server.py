@@ -15,6 +15,7 @@ from mcp.server import Server
 from mcp.types import TextContent, Tool
 
 from vaultknox import __version__
+from vaultknox.hermes_tool import vault_tool
 
 logger = logging.getLogger("vaultknox.mcp")
 
@@ -22,37 +23,45 @@ logger = logging.getLogger("vaultknox.mcp")
 _TOOL_SCHEMAS = {
     "vaultknox_status": {
         "type": "object",
-        "properties": {},
+        "properties": {
+            "agent_id": {"type": "string", "description": "Agent identity for policy enforcement"},
+        },
     },
     "vaultknox_list": {
         "type": "object",
         "properties": {
+            "agent_id": {"type": "string", "description": "Agent identity for policy enforcement"},
             "filter": {"type": "string", "description": "Optional substring filter"},
         },
     },
     "vaultknox_get_metadata": {
         "type": "object",
         "properties": {
+            "agent_id": {"type": "string", "description": "Agent identity for policy enforcement"},
             "secret_id": {"type": "string", "description": "Secret ID or label"},
         },
-        "required": ["secret_id"],
+        "required": ["agent_id", "secret_id"],
     },
     "vaultknox_scan": {
         "type": "object",
         "properties": {
+            "agent_id": {"type": "string", "description": "Agent identity for policy enforcement"},
             "path": {"type": "string", "description": "Path to scan (default: ~/.hermes)"},
         },
     },
     "vaultknox_verify": {
         "type": "object",
         "properties": {
+            "agent_id": {"type": "string", "description": "Agent identity for policy enforcement"},
             "secret_id": {"type": "string", "description": "Secret ID or service name"},
         },
-        "required": ["secret_id"],
+        "required": ["agent_id", "secret_id"],
     },
     "vaultknox_health": {
         "type": "object",
-        "properties": {},
+        "properties": {
+            "agent_id": {"type": "string", "description": "Agent identity for policy enforcement"},
+        },
     },
 }
 
@@ -109,27 +118,20 @@ def _create_server() -> Server:
 
         try:
             vault_paths = expand_runtime_path()
-            vault = VaultKnox(vault_paths)
+            VaultKnox(vault_paths)
+
+            agent_id = (arguments or {}).get("agent_id")
 
             if name == "vaultknox_status":
-                status = vault.status()
-                return [TextContent(type="text", text=json.dumps({
-                    "initialized": status.initialized,
-                    "unlocked": status.unlocked,
-                    "secret_count": status.secret_count,
-                    "auto_lock_minutes": status.auto_lock_minutes,
-                }))]
+                result = vault_tool("status", runtime_dir=str(vault_paths.base_dir), agent_id=agent_id)
+                return [TextContent(type="text", text=json.dumps(result))]
 
             if name == "vaultknox_list":
-                # Require unlocked session
-                if not vault.status().unlocked:
-                    return [TextContent(type="text", text=json.dumps({
-                        "error": "vault_locked",
-                        "message": "Vault is locked. Unlock via CLI first."
-                    }))]
-
                 filter_str = arguments.get("filter", "") if arguments else ""
-                secrets = vault.list_secrets()
+                result = vault_tool("list", runtime_dir=str(vault_paths.base_dir), agent_id=agent_id)
+                if "error" in result:
+                    return [TextContent(type="text", text=json.dumps(result))]
+                secrets = result.get("secrets", [])
 
                 if filter_str:
                     secrets = [s for s in secrets 
@@ -151,27 +153,19 @@ def _create_server() -> Server:
                 return [TextContent(type="text", text=json.dumps({"secrets": masked}))]
 
             if name == "vaultknox_get_metadata":
-                if not vault.status().unlocked:
-                    return [TextContent(type="text", text=json.dumps({
-                        "error": "vault_locked",
-                        "message": "Vault is locked."
-                    }))]
-
                 secret_id = (arguments.get("secret_id") if arguments else None)
                 if not secret_id:
                     return [TextContent(type="text", text=json.dumps({
                         "error": "missing_secret_id"
                     }))]
 
-                # Get masked view - doesn't expose raw secret
-                try:
-                    result = vault.get_masked(secret_id)
-                    return [TextContent(type="text", text=json.dumps(result))]
-                except KeyError:
-                    return [TextContent(type="text", text=json.dumps({
-                        "error": "not_found",
-                        "secret_id": secret_id
-                    }))]
+                result = vault_tool(
+                    "get_masked",
+                    runtime_dir=str(vault_paths.base_dir),
+                    agent_id=agent_id,
+                    secret_id=secret_id,
+                )
+                return [TextContent(type="text", text=json.dumps(result))]
 
             if name == "vaultknox_scan":
                 scan_path_arg = (arguments.get("path") if arguments else None) or "~/.hermes"
@@ -204,24 +198,23 @@ def _create_server() -> Server:
                 }))]
 
             if name == "vaultknox_verify":
-                if not vault.status().unlocked:
-                    return [TextContent(type="text", text=json.dumps({
-                        "error": "vault_locked"
-                    }))]
-
                 secret_id = (arguments.get("secret_id") if arguments else None)
                 if not secret_id:
                     return [TextContent(type="text", text=json.dumps({
                         "error": "missing_secret_id"
                     }))]
 
-                # Credential verification needs the master password; MCP has no password channel.
+                # Verify still requires provider-specific flows not exposed in MCP.
                 return [TextContent(type="text", text=json.dumps({
                     "error": "requires_master_password",
                     "message": "Verify requires vault unlock with master password via CLI"
                 }))]
 
             if name == "vaultknox_health":
+                # Enforce policy gate for health access via tool status path.
+                status_gate = vault_tool("status", runtime_dir=str(vault_paths.base_dir), agent_id=agent_id)
+                if "error" in status_gate:
+                    return [TextContent(type="text", text=json.dumps(status_gate))]
                 # Run health checks using VaultHealthChecker
                 checker = VaultHealthChecker(vault_paths)
                 report = checker.run_all_checks()

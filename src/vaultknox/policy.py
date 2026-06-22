@@ -222,7 +222,16 @@ class PolicyDoctor:
         services = {}
         
         for s in secrets:
-            svc_id = s.get("id", "").split("-")[0]
+            metadata = s.get("metadata") or {}
+            svc_id = metadata.get("service") if isinstance(metadata, dict) else None
+            if not isinstance(svc_id, str) or not svc_id:
+                sid = str(s.get("id", ""))
+                if "-" in sid:
+                    svc_id = sid.split("-")[0]
+                elif "_" in sid:
+                    svc_id = sid.split("_")[0]
+                else:
+                    svc_id = sid
             if svc_id not in services:
                 services[svc_id] = ["get_metadata", "get_env", "verify"]
         

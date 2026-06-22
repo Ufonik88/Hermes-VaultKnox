@@ -23,13 +23,20 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from vaultknox.config import PRIVATE_FILE_MODE, create_private_dir, set_private_file_permissions, write_private_file
-from vaultknox.core import NONCE_SIZE, EncryptedPayload, decrypt_payload, derive_master_key, derive_scoped_key, encrypt_payload, generate_salt
+from vaultknox.config import create_private_dir, set_private_file_permissions, write_private_file
+from vaultknox.core import (
+    NONCE_SIZE,
+    EncryptedPayload,
+    decrypt_payload,
+    derive_master_key,
+    derive_scoped_key,
+    encrypt_payload,
+    generate_salt,
+)
 from vaultknox.db import VaultDatabase
 from vaultknox.exceptions import VaultError
 from vaultknox.types import build_metadata

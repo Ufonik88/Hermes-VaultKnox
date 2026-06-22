@@ -25,6 +25,8 @@ from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from vaultknox.exceptions import OAuthDenied, OAuthError, OAuthStateMismatch, OAuthTimeout, OAuthTokenError
+
 logger = logging.getLogger("vaultknox.oauth")
 
 # ── PKCE - RFC 7636 ────────────────────────────────────────────────────────────────
@@ -65,9 +67,6 @@ def generate_state() -> str:
 def verify_state(provided: str, expected: str) -> bool:
     """Constant-time comparison of state tokens."""
     return secrets.compare_digest(provided, expected)
-
-
-from vaultknox.exceptions import OAuthError, OAuthTimeout, OAuthDenied, OAuthStateMismatch, OAuthTokenError
 
 
 # ── OAuth Providers ────────────────────────────────────────────────────────────────

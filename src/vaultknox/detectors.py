@@ -34,6 +34,15 @@ class Detector:
 
 DETECTORS: list[Detector] = []
 
+PLACEHOLDER_ALLOWLIST = {
+    "example",
+    "placeholder",
+    "changeme",
+    "dummy",
+    "test",
+    "your-key-here",
+}
+
 
 def _register(
     name: str,
@@ -272,6 +281,52 @@ _register(
     severity="high",
     description="Generic secret variable — value appears to be a secret",
     commonly_found_in=[".env", ".json", ".yaml", ".yml", ".sh"],
+)
+
+# Google API Key
+_register(
+    name="Google API Key",
+    pattern=r"AIza[0-9A-Za-z\-_]{35}",
+    severity="critical",
+    description="Google API key",
+    commonly_found_in=[".env", ".json", ".yaml", ".yml"],
+    secret_prefix="AIza",
+)
+
+# GCP service account JSON private key marker
+_register(
+    name="GCP Service Account Private Key",
+    pattern=r"-----BEGIN PRIVATE KEY-----",
+    severity="critical",
+    description="GCP service account private key material",
+    commonly_found_in=[".json"],
+)
+
+# Azure connection string
+_register(
+    name="Azure Storage Connection String",
+    pattern=r"DefaultEndpointsProtocol=https;AccountName=[^;\s]+;AccountKey=[^;\s]+;EndpointSuffix=[^;\s]+",
+    severity="critical",
+    description="Azure Storage connection string",
+    commonly_found_in=[".env", ".json", ".yaml", ".yml"],
+)
+
+# JWT token
+_register(
+    name="JWT Token",
+    pattern=r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}",
+    severity="high",
+    description="JSON Web Token",
+    commonly_found_in=[".env", ".json", ".yaml", ".yml", ".sh"],
+)
+
+# Generic high-entropy assignment (b64-ish token)
+_register(
+    name="High Entropy Secret Assignment",
+    pattern=r"(?i)(?:token|secret|key|password)\s*[=:]\s*['\"]?[A-Za-z0-9+/=_-]{24,}['\"]?",
+    severity="high",
+    description="Potential high-entropy secret assignment",
+    commonly_found_in=[".env", ".json", ".yaml", ".yml", ".sh", "config.py"],
 )
 
 

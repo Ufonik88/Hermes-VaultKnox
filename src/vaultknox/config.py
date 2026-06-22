@@ -4,16 +4,15 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from vaultknox.core import DEFAULT_KDF_PARAMS as _DEFAULT_KDF_PARAMS
+
 DEFAULT_AUTO_LOCK_MINUTES = 15
 DEFAULT_TOKEN_TTL_SECONDS = 300
 DEFAULT_LOCKOUT_MINUTES = 30
 DEFAULT_MAX_ATTEMPTS = 5
 PRIVATE_FILE_MODE = 0o600
 PRIVATE_DIR_MODE = 0o700
-
-# Re-export from core for DRY
-from vaultknox.core import DEFAULT_KDF_PARAMS
-
+DEFAULT_KDF_PARAMS = _DEFAULT_KDF_PARAMS
 
 @dataclass(slots=True)
 class VaultPaths:

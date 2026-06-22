@@ -26,13 +26,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.fernet import Fernet
 
 from vaultknox.config import create_private_dir, write_private_file
-from vaultknox.core import NONCE_SIZE, KEY_SIZE
+from vaultknox.core import KEY_SIZE, NONCE_SIZE
 from vaultknox.exceptions import AutonomousSecretsError
 
 

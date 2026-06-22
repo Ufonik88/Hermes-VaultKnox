@@ -5,6 +5,36 @@ All notable changes to VaultKnox are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] — 2026-06-22
+
+### Added
+
+- **Policy enforcement test suite** — new `tests/test_policy_enforcement.py` covering deny-by-default behavior, per-service allow/deny, raw-secret access gating, policy TTL clamping, and denial response safety.
+- **OAuth refresh test suite** — new `tests/test_oauth_refresh.py` validating near-expiry refresh persistence and non-throwing refresh failure fallback.
+- **Dashboard hardening tests** — new `tests/test_dashboard.py` validating API token bootstrap/cookie flow and hardened response headers.
+- **Detector coverage expansion** — scanner tests now include additional detector behavior and entropy helper assertions.
+
+### Changed
+
+- **Version bump** — package and runtime version advanced to `0.7.0`.
+- **Session-derived key path finalized** — vault operations used by agents (`add`, `update`, `delete`, `consume_token`, `inject_env`, and related flows) operate via session key after operator unlock, without forwarding `master_password` through agent tool kwargs.
+- **Policy Engine v2 activation** — `vault_tool` now enforces policy for agent actions with deny-by-default semantics, action-to-policy mapping, capability checks, service resolution, raw-secret access gating, audited denials, and policy-constrained token TTL.
+- **MCP policy alignment** — MCP tool schemas and handlers now support `agent_id` and route through policy-aware paths for metadata/list/status access.
+- **PolicyDoctor service resolution** — patch generation now resolves service from secret metadata before fallback heuristics.
+- **OAuth retrieval behavior** — OAuth secrets are refreshed on read when near expiry (if provider/client/refresh data is present), with encrypted persistence of refreshed tokens.
+- **Dashboard auth model hardening** — dashboard now supports Authorization/Cookie auth, enforces real token TTL, blocks query-token API access after bootstrap, and sets `Cache-Control: no-store` + `X-Content-Type-Options: nosniff` headers.
+- **Detector and scanner improvements** — added Google API key, GCP private-key marker, Azure connection string, JWT, and high-entropy secret assignment detection; scanner now applies entropy thresholding and placeholder allowlist filtering for generic high-entropy matches.
+
+### Security
+
+- **Policy controls are now live** instead of inert for the primary agent-access paths.
+- **Token handling is stricter** on dashboard and policy-constrained on metadata token issuance.
+- **OAuth secrets are less likely to silently expire** due to refresh-on-read behavior and failure signaling.
+
+### Verification
+
+- `PYTHONPATH=src python -m pytest -q` → **297 passed**
+
 ## [0.6.1] — 2026-06-10
 
 ### Fixed
@@ -233,7 +263,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Autonomous Secrets Store** (`src/vaultknox/autonomous_secrets.py`)
-  - Key-file-backed encrypted credential storage using AES-256-GCM (Fernet)
+  - Key-file-backed encrypted credential storage using Fernet (AES-128-CBC + HMAC-SHA256)
   - No master password required — scripts and cron jobs can read credentials autonomously
   - Same security model as SSH private keys — `master.key` at chmod 600
   - Encrypted `secrets.enc` file is safe for backups, git, and session transcripts
