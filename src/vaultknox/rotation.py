@@ -75,7 +75,8 @@ def _create_pre_rotation_backup(
     ciphertext = aesgcm.encrypt(nonce, raw_db, None)  # type: ignore[arg-type]
 
     backup_payload: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
+        "salt": salt.hex(),
         "nonce": nonce.hex(),
         "ciphertext": ciphertext.hex(),
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -108,6 +109,7 @@ def _restore_from_pre_rotation_backup(
 
     This is the rollback path — used when rotation fails mid-way.
     The backup was encrypted with the old password.
+    Supports both v1 (legacy, reads salt from live vault) and v2 (self-contained) formats.
     """
     raw = json.loads(backup_path.read_text(encoding="utf-8"))
 
@@ -115,23 +117,61 @@ def _restore_from_pre_rotation_backup(
     if not required.issubset(set(raw)):
         raise VaultError("Pre-rotation backup is missing required fields")
 
-    if int(raw["version"]) != 1:
-        raise VaultError(f"Unsupported pre-rotation backup format version: {raw['version']}")
+    version = int(raw["version"])
+    if version not in (1, 2):
+        raise VaultError(f"Unsupported pre-rotation backup format version: {version}")
 
     try:
-        _nonce = bytes.fromhex(raw["nonce"])
-        _ciphertext = bytes.fromhex(raw["ciphertext"])
+        nonce = bytes.fromhex(raw["nonce"])
+        ciphertext = bytes.fromhex(raw["ciphertext"])
     except ValueError as exc:
         raise VaultError("Pre-rotation backup contains invalid hex-encoded values") from exc
 
-    # Re-derive the backup key from old password
-    # We need the salt from the backup or the current vault.
-    # For rollback, the salt should be stored in the backup or we read it from the live vault.
-    # Store the salt in the backup itself for self-contained recovery.
-    raise NotImplementedError(
-        "Rollback requires the original salt stored in the backup. "
-        "Implement _restore_from_pre_rotation_backup with salt stored in backup payload."
-    )
+    # Get salt: v2 stores it in backup, v1 reads from live vault
+    if version == 2:
+        try:
+            salt = bytes.fromhex(raw["salt"])
+        except (KeyError, ValueError) as exc:
+            raise VaultError("Pre-rotation backup v2 missing or invalid salt") from exc
+    else:
+        # v1 fallback: read salt from live vault
+        import sqlite3
+        conn = sqlite3.connect(target_db_path)
+        try:
+            row = conn.execute("SELECT value FROM vault_config WHERE key='argon2_salt'").fetchone()
+            if row is None:
+                raise VaultError("Cannot rollback: vault salt not found in database")
+            salt = bytes.fromhex(str(row[0]))
+        finally:
+            conn.close()
+
+    base_key = derive_master_key(old_password, salt)
+    backup_key = derive_scoped_key(base_key, b"vaultknox-pre-rotation")
+    signing_key = derive_scoped_key(base_key, b"vaultknox-pre-rotation-signature")
+
+    # Verify signature
+    payload_for_sig = {k: v for k, v in raw.items() if k != "signature"}
+    canonical = json.dumps(payload_for_sig, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    expected_sig = hmac.new(signing_key, canonical, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected_sig, raw.get("signature", "")):
+        raise VaultError("Pre-rotation backup signature verification failed — backup may be corrupted")
+
+    # Decrypt
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    aesgcm = AESGCM(backup_key)
+    try:
+        decrypted = aesgcm.decrypt(nonce, ciphertext, None)  # type: ignore[arg-type]
+    except Exception as exc:
+        raise VaultError(f"Pre-rotation backup decryption failed: {exc}") from exc
+
+    if not decrypted.startswith(b"SQLite format 3\x00"):
+        raise VaultError("Pre-rotation backup does not contain a valid SQLite database")
+
+    # Overwrite the live db with the backup
+    target_db_path.parent.mkdir(parents=True, exist_ok=True)
+    target_db_path.write_bytes(decrypted)
+    set_private_file_permissions(target_db_path)
 
 
 def rotate_master_key(
@@ -257,54 +297,10 @@ def _rollback_from_backup(backup_path: Path, db_path: Path, old_password: str) -
     """
     Rollback the vault to the pre-rotation backup state.
 
-    Reads the salt from the LIVE vault config (since we haven't overwritten it yet
-    in a failed transaction) and uses it to decrypt the backup.
+    Uses the self-contained backup (v2) which includes the salt, or falls back
+    to reading from the live vault for v1 backups.
     """
-    import sqlite3
-
-    raw = json.loads(backup_path.read_text(encoding="utf-8"))
-
-    nonce = bytes.fromhex(raw["nonce"])
-    ciphertext = bytes.fromhex(raw["ciphertext"])
-
-    # Read salt from the live vault (should still be intact since rotation failed before commit)
-    # Connect to the db directly to get the salt
-    conn = sqlite3.connect(db_path)
-    try:
-        row = conn.execute("SELECT value FROM vault_config WHERE key='argon2_salt'").fetchone()
-        if row is None:
-            raise VaultError("Cannot rollback: vault salt not found in database")
-        old_salt = bytes.fromhex(str(row[0]))
-    finally:
-        conn.close()
-
-    base_key = derive_master_key(old_password, old_salt)
-    backup_key = derive_scoped_key(base_key, b"vaultknox-pre-rotation")
-    signing_key = derive_scoped_key(base_key, b"vaultknox-pre-rotation-signature")
-
-    # Verify signature
-    payload_for_sig = {k: v for k, v in raw.items() if k != "signature"}
-    canonical = json.dumps(payload_for_sig, separators=(",", ":"), sort_keys=True).encode("utf-8")
-    expected_sig = hmac.new(signing_key, canonical, hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(expected_sig, raw.get("signature", "")):
-        raise VaultError("Pre-rotation backup signature verification failed — backup may be corrupted")
-
-    # Decrypt
-    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-    aesgcm = AESGCM(backup_key)
-    try:
-        decrypted = aesgcm.decrypt(nonce, ciphertext, None)  # type: ignore[arg-type]
-    except Exception as exc:
-        raise VaultError(f"Pre-rotation backup decryption failed: {exc}") from exc
-
-    if not decrypted.startswith(b"SQLite format 3\x00"):
-        raise VaultError("Pre-rotation backup does not contain a valid SQLite database")
-
-    # Overwrite the live db with the backup
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    db_path.write_bytes(decrypted)
-    set_private_file_permissions(db_path)
+    _restore_from_pre_rotation_backup(backup_path, db_path, old_password)
 
 
 def list_pre_rotation_backups(vault_dir: Path) -> list[dict[str, Any]]:
