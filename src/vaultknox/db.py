@@ -68,7 +68,10 @@ class VaultDatabase:
         self._schema_current = False
 
     def initialize(self) -> None:
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        from vaultknox.config import create_private_dir, write_private_file
+        create_private_dir(self.db_path.parent)
+        # Create the database file with restrictive permissions
+        # SQLite will create the file, but we ensure the directory is 0o700
         with self.connection() as conn:
             conn.executescript(SCHEMA)
             rows = conn.execute("PRAGMA integrity_check").fetchall()

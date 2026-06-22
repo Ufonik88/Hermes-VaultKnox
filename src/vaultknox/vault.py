@@ -14,7 +14,7 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from vaultknox.audit import write_audit_event
-from vaultknox.config import DEFAULT_AUTO_LOCK_MINUTES, DEFAULT_LOCKOUT_MINUTES, DEFAULT_MAX_ATTEMPTS, DEFAULT_TOKEN_TTL_SECONDS, VaultPaths, set_private_file_permissions
+from vaultknox.config import DEFAULT_AUTO_LOCK_MINUTES, DEFAULT_LOCKOUT_MINUTES, DEFAULT_MAX_ATTEMPTS, DEFAULT_TOKEN_TTL_SECONDS, VaultPaths, create_private_dir, set_private_file_permissions, write_private_file
 from vaultknox.core import NONCE_SIZE, EncryptedPayload, decrypt_payload, derive_master_key, derive_scoped_key, encrypt_payload, generate_salt, generate_token
 from vaultknox.db import VaultDatabase
 from vaultknox.exceptions import VaultError
@@ -190,9 +190,8 @@ class VaultKnox:
         backup = dict(backup_payload)
         backup["signature"] = self._backup_signature(signing_key, backup_payload)
         export_path = self.paths.base_dir / export_file if not Path(export_file).is_absolute() else Path(export_file)
-        export_path.parent.mkdir(parents=True, exist_ok=True)
-        export_path.write_text(json.dumps(backup, separators=(",", ":")), encoding="utf-8")
-        set_private_file_permissions(export_path)
+        create_private_dir(export_path.parent)
+        write_private_file(export_path, json.dumps(backup, separators=(",", ":")))
         write_audit_event(self.paths.audit_log_path, "export", "success", details={"file": str(export_path)})
         return {"exported_to": str(export_path)}
 

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
 
-from vaultknox.config import set_private_file_permissions
+from vaultknox.config import create_private_dir, set_private_file_permissions, write_private_file
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,9 +43,8 @@ class SessionStore:
                 expires_at=expires_at.isoformat(),
                 refreshed_at=now.isoformat(),
             )
-            self.session_path.parent.mkdir(parents=True, exist_ok=True)
-            self.session_path.write_text(json.dumps(asdict(state), separators=(",", ":")), encoding="utf-8")
-            set_private_file_permissions(self.session_path)
+            create_private_dir(self.session_path.parent)
+            write_private_file(self.session_path, json.dumps(asdict(state), separators=(",", ":")))
             return state
 
     def read(self) -> SessionState | None:

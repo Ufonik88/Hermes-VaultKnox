@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from vaultknox.config import PRIVATE_FILE_MODE, set_private_file_permissions
+from vaultknox.config import PRIVATE_FILE_MODE, create_private_dir, set_private_file_permissions, write_private_file
 from vaultknox.core import NONCE_SIZE, derive_master_key, derive_scoped_key, encrypt_payload, generate_salt
 from vaultknox.db import VaultDatabase
 from vaultknox.exceptions import VaultError
@@ -92,9 +92,8 @@ def _create_pre_rotation_backup(
     backup_payload["signature"] = sig
 
     backup_path = _backup_filename(vault_dir)
-    backup_path.parent.mkdir(parents=True, exist_ok=True)
-    backup_path.write_text(json.dumps(backup_payload, separators=(",", ":")), encoding="utf-8")
-    os.chmod(backup_path, PRIVATE_FILE_MODE)
+    create_private_dir(backup_path.parent)
+    write_private_file(backup_path, json.dumps(backup_payload, separators=(",", ":")))
 
     return backup_path
 

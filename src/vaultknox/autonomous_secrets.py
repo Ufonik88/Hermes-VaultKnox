@@ -23,6 +23,8 @@ from typing import Any
 
 from cryptography.fernet import Fernet
 
+from vaultknox.config import create_private_dir, write_private_file
+
 
 from vaultknox.exceptions import AutonomousSecretsError
 
@@ -75,13 +77,11 @@ class AutonomousSecretsStore:
                 f"Store already exists at {self._base_dir}. "
                 "Use force=True to overwrite."
             )
-        self._base_dir.mkdir(parents=True, exist_ok=True)
+        create_private_dir(self._base_dir)
         key = Fernet.generate_key()
-        self._key_path.write_bytes(key)
-        self._key_path.chmod(0o600)
+        write_private_file(self._key_path, key)
         empty_encrypted = Fernet(key).encrypt(json.dumps({}).encode())
-        self._secrets_path.write_bytes(empty_encrypted)
-        self._secrets_path.chmod(0o600)
+        write_private_file(self._secrets_path, empty_encrypted)
         return f"Initialised autonomous secrets store at {self._base_dir}"
 
     @property
@@ -309,8 +309,7 @@ class AutonomousSecretsStore:
         fernet = Fernet(key)
         plaintext = json.dumps(secrets, indent=2, sort_keys=True).encode()
         encrypted = fernet.encrypt(plaintext)
-        self._secrets_path.write_bytes(encrypted)
-        self._secrets_path.chmod(0o600)
+        write_private_file(self._secrets_path, encrypted)
 
     @staticmethod
     def _find_default_dir() -> Path:
