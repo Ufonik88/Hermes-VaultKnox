@@ -62,7 +62,7 @@ class VaultKnox:
     def __init__(self, paths: VaultPaths) -> None:
         self.paths = paths
         self.db = VaultDatabase(paths.db_path)
-        self.sessions = SessionStore(paths.session_path, paths.session_lock_path)
+        self.sessions = SessionStore(paths.session_path, paths.session_lock_path, paths.session_path.with_name("session.key"))
 
     def initialize(self, password: str, auto_lock_minutes: int = DEFAULT_AUTO_LOCK_MINUTES, max_attempts: int = DEFAULT_MAX_ATTEMPTS, lockout_minutes: int = DEFAULT_LOCKOUT_MINUTES, skip_password_check: bool = False) -> None:
         if self.paths.db_path.exists():
@@ -95,7 +95,11 @@ class VaultKnox:
     def unlock(self, password: str) -> dict[str, Any]:
         self._verify_password(password)
         auto_lock_minutes = int(self.db.get_config("auto_lock_minutes") or DEFAULT_AUTO_LOCK_MINUTES)
-        state = self.sessions.write(auto_lock_minutes)
+        # Derive entry key and store in session
+        salt = bytes.fromhex(self.db.get_config("argon2_salt") or "")
+        master_key = derive_master_key(password, salt)
+        entry_key = derive_scoped_key(master_key)
+        state = self.sessions.write(auto_lock_minutes, entry_key=entry_key)
         write_audit_event(self.paths.audit_log_path, "unlock", "success")
         return {"unlocked_at": state.unlocked_at, "expires_at": state.expires_at}
 
@@ -107,8 +111,8 @@ class VaultKnox:
         self._require_unlocked()
         return self.db.list_secrets()
 
-    def add_secret(self, password: str, secret_id: str, secret_type: str, label: str, payload: dict[str, Any], expires_at: str | None = None) -> dict[str, Any]:
-        key = self._entry_key(password)
+    def add_secret(self, password: str | None, secret_id: str, secret_type: str, label: str, payload: dict[str, Any], expires_at: str | None = None) -> dict[str, Any]:
+        key = self._session_entry_key() if password is None else self._entry_key(password)
         validate_secret(secret_type, payload)
         metadata = build_metadata(secret_type, payload)
         encrypted = encrypt_payload(key, payload)
@@ -116,8 +120,8 @@ class VaultKnox:
         write_audit_event(self.paths.audit_log_path, "add", "success", secret_id=secret_id)
         return masked_view(secret_id, secret_type, label, metadata)
 
-    def update_secret(self, password: str, secret_id: str, secret_type: str, label: str, payload: dict[str, Any], expires_at: str | None = None) -> dict[str, Any]:
-        key = self._entry_key(password)
+    def update_secret(self, password: str | None, secret_id: str, secret_type: str, label: str, payload: dict[str, Any], expires_at: str | None = None) -> dict[str, Any]:
+        key = self._session_entry_key() if password is None else self._entry_key(password)
         validate_secret(secret_type, payload)
         metadata = build_metadata(secret_type, payload)
         encrypted = encrypt_payload(key, payload)
@@ -125,8 +129,8 @@ class VaultKnox:
         write_audit_event(self.paths.audit_log_path, "update", "success", secret_id=secret_id)
         return masked_view(secret_id, secret_type, label, metadata)
 
-    def get_secret(self, password: str, secret_id: str) -> dict[str, Any]:
-        key = self._entry_key(password)
+    def get_secret(self, password: str | None, secret_id: str) -> dict[str, Any]:
+        key = self._session_entry_key() if password is None else self._entry_key(password)
         row = self.db.get_secret_row(secret_id)
         expires_at = row["expires_at"] if "expires_at" in row.keys() else None
         if expires_at and _parse_utc_datetime(expires_at) <= datetime.now(timezone.utc):
@@ -160,8 +164,11 @@ class VaultKnox:
         write_audit_event(self.paths.audit_log_path, "get_masked", "success", secret_id=secret_id, details={"token": bool(token)})
         return masked_view(row["id"], row["type"], row["label"], metadata, token=token)
 
-    def delete_secret(self, password: str, secret_id: str) -> None:
-        self._verify_password(password)
+    def delete_secret(self, password: str | None, secret_id: str) -> None:
+        if password is None:
+            self._session_entry_key()  # Verify session is valid
+        else:
+            self._verify_password(password)
         self.db.delete_secret(secret_id)
         write_audit_event(self.paths.audit_log_path, "delete", "success", secret_id=secret_id)
 
@@ -257,7 +264,7 @@ class VaultKnox:
         result = rotate_master_key(self.db, self.paths.base_dir, current_password, new_password)
         write_audit_event(self.paths.audit_log_path, "change_password", "success", details={"secrets_rotated": result["secrets_rotated"]})
 
-    def consume_token(self, password: str, token: str) -> dict[str, Any]:
+    def consume_token(self, password: str | None, token: str) -> dict[str, Any]:
         if self.db.is_token_revoked(token):
             raise VaultError("Token has been revoked")
         try:
@@ -274,7 +281,7 @@ class VaultKnox:
         write_audit_event(self.paths.audit_log_path, "consume_token", "success", secret_id=row["secret_id"])
         return secret
 
-    def inject_to_env(self, password: str, secret_id: str, env_var: str) -> dict[str, Any]:
+    def inject_to_env(self, password: str | None, secret_id: str, env_var: str) -> dict[str, Any]:
         secret = self.get_secret(password, secret_id)
         field = _ENV_FIELD_BY_TYPE.get(secret["type"])
         if field is None or field not in secret["payload"]:
@@ -284,8 +291,11 @@ class VaultKnox:
         write_audit_event(self.paths.audit_log_path, "inject_env", "success", secret_id=secret_id, details={"env_var": env_var})
         return {"injected": env_var, "secret_id": secret_id}
 
-    def revoke_token(self, password: str, token: str, reason: str | None = None) -> dict[str, Any]:
-        self._verify_password(password)
+    def revoke_token(self, password: str | None, token: str, reason: str | None = None) -> dict[str, Any]:
+        if password is None:
+            self._session_entry_key()  # Verify session is valid
+        else:
+            self._verify_password(password)
         self.db.revoke_token(token, reason)
         write_audit_event(self.paths.audit_log_path, "revoke_token", "success", details={"token_prefix": token[:8]})
         return {"revoked": True}
@@ -296,9 +306,9 @@ class VaultKnox:
         write_audit_event(self.paths.audit_log_path, "cleanup_expired_tokens", "success", details={"deleted_count": count})
         return {"deleted_count": count}
 
-    def bulk_import_secrets(self, password: str, entries: list[dict[str, Any]]) -> dict[str, Any]:
+    def bulk_import_secrets(self, password: str | None, entries: list[dict[str, Any]]) -> dict[str, Any]:
         """Import multiple secrets in a single operation. All entries are validated before any are written."""
-        key = self._entry_key(password)
+        key = self._session_entry_key() if password is None else self._entry_key(password)
         prepared: list[tuple[str, str, str, dict[str, Any], EncryptedPayload, str | None]] = []
         for i, entry in enumerate(entries):
             try:
@@ -355,6 +365,13 @@ class VaultKnox:
         salt = bytes.fromhex(self.db.get_config("argon2_salt") or "")
         master_key = derive_master_key(password, salt)
         return derive_scoped_key(master_key)
+
+    def _session_entry_key(self) -> bytes:
+        """Get the entry key from the session store."""
+        key = self.sessions.get_session_key()
+        if key is None:
+            raise VaultError("Vault is locked; run unlock first")
+        return key
 
     def _require_unlocked(self) -> None:
         if not self.sessions.is_unlocked():

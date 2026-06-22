@@ -88,18 +88,24 @@ def test_revoke_token_via_hermes_blocks_consume(runtime_dir: Path) -> None:
         vault_tool("consume_token", runtime_dir=str(runtime_dir), master_password=STRONG_PASSWORD, token=token)
 
 
-def test_sensitive_action_requires_master_password(runtime_dir: Path) -> None:
+def test_agent_actions_work_without_master_password_after_unlock(runtime_dir: Path) -> None:
+    """Agent actions should work without master_password after operator unlock."""
     vault = VaultKnox(expand_runtime_path(runtime_dir))
     vault.initialize(STRONG_PASSWORD)
     vault.unlock(STRONG_PASSWORD)
 
-    with pytest.raises(VaultError, match="requires master_password"):
-        vault_tool(
-            "add",
-            allow_write=True,
-            runtime_dir=str(runtime_dir),
-            secret_id="note_1",
-            secret_type="note",
-            label="Note",
-            payload={"content": "secret"},
-        )
+    # Agent can now use session key - no master_password needed
+    result = vault_tool(
+        "add",
+        allow_write=True,
+        runtime_dir=str(runtime_dir),
+        secret_id="note_1",
+        secret_type="note",
+        label="Note",
+        payload={"content": "secret"},
+    )
+    assert result["id"] == "note_1"
+
+    # Also test get_masked works without master_password
+    masked = vault_tool("get_masked", runtime_dir=str(runtime_dir), secret_id="note_1")
+    assert masked["id"] == "note_1"
