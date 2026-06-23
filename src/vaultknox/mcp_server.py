@@ -111,6 +111,7 @@ def _create_server() -> Server:
         """Handle tool calls."""
         from vaultknox.config import expand_runtime_path
         from vaultknox.health import VaultHealthChecker
+        from vaultknox.policy import PolicyEngine
         from vaultknox.scanner import SecretScanner
 
         # Import here to avoid circular imports
@@ -168,6 +169,11 @@ def _create_server() -> Server:
                 return [TextContent(type="text", text=json.dumps(result))]
 
             if name == "vaultknox_scan":
+                if not agent_id:
+                    return [TextContent(type="text", text=json.dumps({"error": "policy_denied", "message": "agent_id required"}))]
+                if not PolicyEngine(vault_paths.base_dir / "policy.yaml").check_capability(agent_id, "scan_secrets"):
+                    return [TextContent(type="text", text=json.dumps({"error": "policy_denied", "message": "Agent lacks capability: scan_secrets"}))]
+
                 scan_path_arg = (arguments.get("path") if arguments else None) or "~/.hermes"
                 # Replace ~ with the real user home for the Hermes scan root (independent of vault base_dir)
                 scan_path = Path(scan_path_arg.replace("~", str(Path.home())))

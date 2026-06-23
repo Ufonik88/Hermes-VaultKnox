@@ -53,12 +53,13 @@ def vault_with_policy(runtime_dir: Path) -> VaultKnox:
 def test_hermes_wrapper_blocks_write_by_default(runtime_dir: Path) -> None:
     vault = VaultKnox(expand_runtime_path(runtime_dir))
     vault.initialize(STRONG_PASSWORD)
+    vault.unlock(STRONG_PASSWORD)
 
     with pytest.raises(VaultError):
         vault_tool(
             "add",
             runtime_dir=str(runtime_dir),
-            master_password=STRONG_PASSWORD,
+            agent_id=TEST_AGENT_ID,
             secret_id="note_1",
             secret_type="note",
             label="Note",
@@ -168,3 +169,25 @@ def test_agent_actions_work_without_master_password_after_unlock(runtime_dir: Pa
     # Also test get_masked works without master_password
     masked = vault_tool("get_masked", runtime_dir=str(runtime_dir), agent_id=TEST_AGENT_ID, secret_id="note_1")
     assert masked["id"] == "note_1"
+
+
+def test_agent_actions_reject_master_password_kwarg(runtime_dir: Path) -> None:
+    vault = VaultKnox(expand_runtime_path(runtime_dir))
+    vault.initialize(STRONG_PASSWORD)
+    vault.unlock(STRONG_PASSWORD)
+
+    policy_path = runtime_dir / "policy.yaml"
+    policy_path.write_text(TEST_POLICY_YAML)
+
+    with pytest.raises(VaultError, match="does not accept master_password"):
+        vault_tool(
+            "add",
+            allow_write=True,
+            runtime_dir=str(runtime_dir),
+            agent_id=TEST_AGENT_ID,
+            master_password=STRONG_PASSWORD,
+            secret_id="note_1",
+            secret_type="note",
+            label="Note",
+            payload={"content": "secret"},
+        )

@@ -32,9 +32,13 @@ from vaultknox.core import (
     NONCE_SIZE,
     EncryptedPayload,
     decrypt_payload,
+    derive_metadata_key,
     derive_master_key,
+    derive_search_key,
     derive_scoped_key,
+    encrypt_metadata,
     encrypt_payload,
+    encrypt_search_token,
     generate_salt,
 )
 from vaultknox.db import VaultDatabase
@@ -215,24 +219,31 @@ def rotate_master_key(
         new_master_key = derive_master_key(new_password, new_salt)
         new_entry_key = derive_scoped_key(new_master_key)
         new_verifier_key = derive_scoped_key(new_master_key, b"vaultknox-verifier")
+        new_metadata_key = derive_metadata_key(new_entry_key)
+        new_search_key = derive_search_key(new_entry_key)
 
         # Step 3: Re-encrypt all secrets
         rows = db.list_secret_rows_raw()
-        decrypted_payloads: list[tuple[str, str, str, dict[str, Any], bytes, bytes, bytes]] = []
+        decrypted_payloads: list[tuple[str, str, str, bytes, bytes, bytes, str | None]] = []
         for row in rows:
             payload = decrypt_payload(
                 old_entry_key,
                 EncryptedPayload(nonce=row["nonce"], ciphertext=row["data"], tag=row["tag"]),
             )
             encrypted = encrypt_payload(new_entry_key, payload)
-            metadata = build_metadata(row["type"], payload)
+            metadata = encrypt_metadata(new_metadata_key, build_metadata(row["type"], payload))
+            search_tokens = []
+            for field_name, field_value in payload.items():
+                if isinstance(field_value, str) and field_value:
+                    search_tokens.append(encrypt_search_token(new_search_key, f"{field_name}:{field_value}"))
             decrypted_payloads.append((
                 row["id"],
                 row["type"],
-                json.dumps(metadata, separators=(",", ":")),
+                metadata,
                 encrypted.ciphertext,
                 encrypted.nonce,
                 encrypted.tag,
+                ",".join(search_tokens) if search_tokens else None,
             ))
 
         # Step 4: Atomic write — update salt, verifier, and all secrets
@@ -257,10 +268,10 @@ def rotate_master_key(
             )
             # Update all secrets
             now = datetime.now(timezone.utc).isoformat()
-            for secret_id, secret_type, metadata_json, ciphertext, nonce_bytes, tag in decrypted_payloads:
+            for secret_id, secret_type, metadata_json, ciphertext, nonce_bytes, tag, search_tokens in decrypted_payloads:
                 conn.execute(
-                    "UPDATE secrets SET type=?, data=?, nonce=?, tag=?, metadata=?, updated_at=? WHERE id=?",
-                    (secret_type, ciphertext, nonce_bytes, tag, metadata_json, now, secret_id),
+                    "UPDATE secrets SET type=?, data=?, nonce=?, tag=?, metadata=?, updated_at=?, search_tokens=? WHERE id=?",
+                    (secret_type, ciphertext, nonce_bytes, tag, metadata_json, now, search_tokens, secret_id),
                 )
             conn.commit()
 

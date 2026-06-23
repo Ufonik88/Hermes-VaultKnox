@@ -4,6 +4,7 @@ from typing import Any
 
 from vaultknox.audit import write_audit_event
 from vaultknox.config import expand_runtime_path
+from vaultknox.core import derive_metadata_key
 from vaultknox.detectors import DETECTORS
 from vaultknox.policy import PolicyEngine
 from vaultknox.vault import VaultError, VaultKnox
@@ -39,11 +40,13 @@ def _resolve_service(vault: VaultKnox, secret_id: str) -> str:
     """Resolve service from secret metadata."""
     try:
         row = vault.db.get_secret_row(secret_id)
-        metadata = row["metadata"]
-        import json
-        meta = json.loads(metadata)
+        meta = vault._decode_metadata(derive_metadata_key(vault._session_entry_key()), row["metadata"])
         if "service" in meta and isinstance(meta.get("service"), str) and meta["service"]:
             return meta["service"]
+        if row["type"] == "note":
+            return "note"
+        if isinstance(row["type"], str) and row["type"]:
+            return row["type"]
         if "-" in secret_id:
             return secret_id.split("-")[0]
         if "_" in secret_id:
@@ -111,6 +114,24 @@ def _check_policy(
     return None
 
 
+def _clamp_token_ttl(paths, vault: VaultKnox, agent_id: str | None, secret_id: str, requested_ttl: int) -> int:
+    if not agent_id:
+        return requested_ttl
+    policy_engine = PolicyEngine(paths.base_dir / "policy.yaml")
+    service = _resolve_service(vault, secret_id)
+    agent_policy = policy_engine._agents.get(agent_id)
+    if not agent_policy:
+        return requested_ttl
+    token_ttl = requested_ttl
+    if service in agent_policy.services:
+        svc_max = agent_policy.services[service].max_ttl_seconds
+        if svc_max:
+            token_ttl = min(token_ttl, svc_max)
+    if agent_policy.max_ttl_seconds:
+        token_ttl = min(token_ttl, agent_policy.max_ttl_seconds)
+    return token_ttl
+
+
 def vault_tool(
     action: str,
     allow_write: bool = False,
@@ -128,6 +149,8 @@ def vault_tool(
     if action in OPERATOR_ACTIONS:
         if not master_password:
             raise VaultError(f"Action '{action}' requires master_password")
+    elif master_password is not None:
+        raise VaultError(f"Action '{action}' does not accept master_password; unlock the vault first")
 
     try:
         # --- Policy check ---
@@ -174,21 +197,7 @@ def vault_tool(
         elif action == "list":
             result = {"secrets": vault.list_secrets()}
         elif action == "get_masked":
-            # Clamp token TTL by policy if agent_id provided
-            token_ttl = kwargs.get("token_ttl_seconds", 300)
-            if agent_id:
-                policy_engine = PolicyEngine(paths.base_dir / "policy.yaml")
-                service = _resolve_service(vault, kwargs["secret_id"])
-                agent_policy = policy_engine._agents.get(agent_id)
-                if agent_policy:
-                    # Check service-specific max_ttl
-                    if service in agent_policy.services:
-                        svc_max = agent_policy.services[service].max_ttl_seconds
-                        if svc_max:
-                            token_ttl = min(token_ttl, svc_max)
-                    # Check agent-level max_ttl
-                    if agent_policy.max_ttl_seconds:
-                        token_ttl = min(token_ttl, agent_policy.max_ttl_seconds)
+            token_ttl = _clamp_token_ttl(paths, vault, agent_id, kwargs["secret_id"], kwargs.get("token_ttl_seconds", 300))
             
             result = vault.get_masked(
                 kwargs["secret_id"],
@@ -196,11 +205,12 @@ def vault_tool(
                 token_ttl_seconds=token_ttl,
             )
         elif action == "get_token":
+            token_ttl = _clamp_token_ttl(paths, vault, agent_id, kwargs["secret_id"], kwargs.get("token_ttl_seconds", 300))
             result = {
                 "token": vault.issue_token(
                     kwargs["secret_id"],
                     purpose=kwargs["purpose"],
-                    token_ttl_seconds=kwargs.get("token_ttl_seconds", 300),
+                    token_ttl_seconds=token_ttl,
                 )
             }
         elif action == "add":

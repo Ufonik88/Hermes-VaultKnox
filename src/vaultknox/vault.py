@@ -29,17 +29,17 @@ from vaultknox.core import (
     NONCE_SIZE,
     EncryptedPayload,
     decrypt_payload,
+    decrypt_metadata,
+    derive_metadata_key,
     derive_master_key,
+    derive_search_key,
     derive_scoped_key,
+    encrypt_metadata,
     encrypt_payload,
+    encrypt_search_token,
     generate_salt,
     generate_token,
     validate_kdf_params,
-    derive_search_key,
-    encrypt_search_token,
-    derive_metadata_key,
-    encrypt_metadata,
-    decrypt_metadata,
 )
 from vaultknox.db import VaultDatabase
 from vaultknox.exceptions import VaultError
@@ -147,18 +147,13 @@ class VaultKnox:
 
     def list_secrets(self) -> list[dict[str, Any]]:
         self._require_unlocked()
-        secrets = self.db.list_secrets()
-        # Decrypt metadata for each secret
+        rows = self.db.list_secrets()
         meta_key = derive_metadata_key(self._session_entry_key())
-        for secret in secrets:
-            metadata_encrypted = secret.get("metadata")
-            if metadata_encrypted:
-                try:
-                    secret["metadata"] = decrypt_metadata(meta_key, metadata_encrypted)
-                except Exception:
-                    secret["metadata"] = {}
-            else:
-                secret["metadata"] = {}
+        secrets: list[dict[str, Any]] = []
+        for row in rows:
+            secret = dict(row)
+            secret["metadata"] = self._decode_metadata(meta_key, secret.get("metadata"))
+            secrets.append(secret)
         return secrets
 
     def add_secret(self, password: str | None, secret_id: str, secret_type: str, label: str, payload: dict[str, Any], expires_at: str | None = None) -> dict[str, Any]:
@@ -278,7 +273,8 @@ class VaultKnox:
                 new_payload["expires_at"] = (datetime.now(timezone.utc) + timedelta(seconds=refreshed.expires_in)).isoformat()
             encrypted = encrypt_payload(key, new_payload)
             metadata = build_metadata("oauth", new_payload)
-            self.db.update_secret_crypto(str(row["id"]), encrypted.ciphertext, encrypted.nonce, encrypted.tag, metadata)
+            metadata_encrypted = encrypt_metadata(derive_metadata_key(key), metadata)
+            self.db.update_secret_crypto(str(row["id"]), encrypted.ciphertext, encrypted.nonce, encrypted.tag, metadata_encrypted)
             write_audit_event(self.paths.audit_log_path, "oauth_refresh", "success", secret_id=str(row["id"]))
             return new_payload
         except OAuthTokenError:
@@ -296,16 +292,8 @@ class VaultKnox:
             write_audit_event(self.paths.audit_log_path, "get_masked", "expired", secret_id=secret_id)
             return {"expired": True, "expires_at": expires_at, "id": secret_id}
         
-        # Decrypt metadata
         meta_key = derive_metadata_key(key)
-        metadata_encrypted = row["metadata"]
-        if metadata_encrypted:
-            try:
-                metadata = decrypt_metadata(meta_key, metadata_encrypted)
-            except Exception:
-                metadata = {}
-        else:
-            metadata = {}
+        metadata = self._decode_metadata(meta_key, row["metadata"])
         
         token = None
         if purpose:
@@ -459,7 +447,7 @@ class VaultKnox:
         """Import multiple secrets in a single operation. All entries are validated before any are written."""
         key = self._session_entry_key() if password is None else self._entry_key(password)
         search_key = derive_search_key(key)
-        prepared: list[tuple[str, str, str, dict[str, Any], EncryptedPayload, str | None, str | None]] = []
+        prepared: list[tuple[str, str, str, str, EncryptedPayload, str | None, str | None]] = []
         for i, entry in enumerate(entries):
             try:
                 secret_id = entry["id"]
@@ -474,6 +462,7 @@ class VaultKnox:
             except Exception as exc:  # noqa: BLE001
                 raise VaultError(f"Entry {i} ('{secret_id}'): {exc}") from exc
             metadata = build_metadata(secret_type, payload)
+            metadata_encrypted = encrypt_metadata(derive_metadata_key(key), metadata)
             encrypted = encrypt_payload(key, payload)
             
             # Generate search tokens
@@ -484,7 +473,7 @@ class VaultKnox:
                     search_tokens.append(token)
             search_tokens_str = ",".join(search_tokens) if search_tokens else None
             
-            prepared.append((secret_id, secret_type, label, metadata, encrypted, expires_at, search_tokens_str))
+            prepared.append((secret_id, secret_type, label, metadata_encrypted, encrypted, expires_at, search_tokens_str))
 
         imported: list[str] = []
         try:
@@ -502,7 +491,7 @@ class VaultKnox:
                             encrypted.tag,
                             now,
                             now,
-                            json.dumps(metadata, separators=(",", ":")),
+                            metadata,
                             expires_at,
                             search_tokens_str,
                         ),
@@ -534,6 +523,23 @@ class VaultKnox:
         if key is None:
             raise VaultError("Vault is locked; run unlock first")
         return key
+
+    def _decode_metadata(self, meta_key: bytes, metadata: Any) -> dict[str, Any]:
+        if not metadata:
+            return {}
+        if isinstance(metadata, dict):
+            return metadata
+        if not isinstance(metadata, str):
+            return {}
+        try:
+            return decrypt_metadata(meta_key, metadata)
+        except Exception:
+            pass
+        try:
+            decoded = json.loads(metadata)
+        except Exception:
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
 
     def _require_unlocked(self) -> None:
         if not self.sessions.is_unlocked():

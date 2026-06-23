@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Session-derived key path finalized** — vault operations used by agents (`add`, `update`, `delete`, `consume_token`, `inject_env`, and related flows) operate via session key after operator unlock, without forwarding `master_password` through agent tool kwargs.
 - **Policy Engine v2 activation** — `vault_tool` now enforces policy for agent actions with deny-by-default semantics, action-to-policy mapping, capability checks, service resolution, raw-secret access gating, audited denials, and policy-constrained token TTL.
 - **MCP policy alignment** — MCP tool schemas and handlers now support `agent_id` and route through policy-aware paths for metadata/list/status access.
+- **Autonomous store crypto migration** — autonomous secrets now use AES-256-GCM v2 storage, with legacy Fernet v1 files auto-migrated on load.
 - **PolicyDoctor service resolution** — patch generation now resolves service from secret metadata before fallback heuristics.
 - **OAuth retrieval behavior** — OAuth secrets are refreshed on read when near expiry (if provider/client/refresh data is present), with encrypted persistence of refreshed tokens.
 - **Dashboard auth model hardening** — dashboard now supports Authorization/Cookie auth, enforces real token TTL, blocks query-token API access after bootstrap, and sets `Cache-Control: no-store` + `X-Content-Type-Options: nosniff` headers.
@@ -29,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Policy controls are now live** instead of inert for the primary agent-access paths.
 - **Token handling is stricter** on dashboard and policy-constrained on metadata token issuance.
+- **Encrypted metadata/search invariants verified** — metadata and deterministic search tokens are re-encrypted on writes, imports, OAuth refreshes, and master-key rotation.
 - **OAuth secrets are less likely to silently expire** due to refresh-on-read behavior and failure signaling.
 
 ### Verification
@@ -263,7 +265,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Autonomous Secrets Store** (`src/vaultknox/autonomous_secrets.py`)
-  - Key-file-backed encrypted credential storage using Fernet (AES-128-CBC + HMAC-SHA256)
+  - Key-file-backed encrypted credential storage (legacy format later migrated to AES-256-GCM v2)
   - No master password required — scripts and cron jobs can read credentials autonomously
   - Same security model as SSH private keys — `master.key` at chmod 600
   - Encrypted `secrets.enc` file is safe for backups, git, and session transcripts

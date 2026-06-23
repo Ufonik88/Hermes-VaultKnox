@@ -85,7 +85,7 @@ Compromise of any sub-key does not expose the master key or any other sub-key's 
 
 ## Features
 
-- AES-256-GCM encryption for master vault secret payloads; Fernet (AES-128-CBC + HMAC-SHA256) for autonomous store
+- AES-256-GCM encryption for master vault secret payloads; AES-256-GCM v2 for autonomous store (Fernet v1 auto-migration only)
 - SQLite-backed local vault storage
 - Masked secret retrieval for agent-safe responses
 - One-time token issuance for downstream automation
@@ -112,7 +112,7 @@ Compromise of any sub-key does not expose the master key or any other sub-key's 
 - **v0.5.0** — Secret type: `oauth` with auto-refresh tokens
 - **v0.4.2** — Outbound response scanner: catches AI responses that ask users to paste secrets and rewrites them with safe guidance. System prompt injection proactively instructs the AI to never request secrets. New `agent_requests_secret` critical trigger.
 - **v0.4.1** — Fixed dormant secret-guard hook: added `message:received` emitter and `pre_gateway_dispatch` plugin so redaction actually fires on incoming messages
-- **v0.4.0** — 21 built-in secret detectors for chat and file scanning
+- **v0.4.0** — 26 built-in secret detectors for chat and file scanning
 - **v0.4.0** — Proactive `scan_text` tool action for runtime secret detection
 - **v0.4.0** — Secret-guard hook for automatic chat message redaction
 - **v0.4.0** — `sanitize-history` CLI for cleaning leaked secrets from persistent stores
@@ -189,7 +189,7 @@ Default runtime files are stored under `~/.hermes/`:
 - `~/.hermes/encrypted-secrets/` — autonomous key-file-backed encrypted store (recommended)
 
 The `encrypted-secrets/` directory contains:
-- `master.key` — Fernet key (AES-128-CBC + HMAC-SHA256, chmod 600, never in logs)
+- `master.key` — autonomous store key (v2 AES-256-GCM, chmod 600, never in logs)
 - `secrets.enc` — encrypted JSON blob (safe for backups/git)
 
 - `secrets.db`: encrypted SQLite vault database
@@ -212,7 +212,7 @@ The safest integration path is the `vault_tool` wrapper in `src/vaultknox/hermes
 | `get_token` | Issue single-use token for automation | No |
 | `inject_env` | Inject a secret into an environment variable | Yes |
 | `consume_token` | Exchange a one-time token for plaintext | No |
-| `scan_text` | Scan arbitrary text for secrets using 21 detectors | No |
+| `scan_text` | Scan arbitrary text for secrets using 26 detectors | No |
 | `add` | Add new secret | Yes |
 | `update` | Update existing secret | Yes |
 | `delete` | Remove secret | Yes |
@@ -251,7 +251,7 @@ src/vaultknox/
 ├── config.py                # Paths and defaults
 ├── cli.py                   # Click entry point (vault + secrets + audit + expiry + ops)
 ├── hermes_tool.py           # Hermes `vaultknox` tool wrapper (includes scan_text)
-├── detectors.py             # 21 built-in secret detector patterns
+├── detectors.py             # 26 built-in secret detector patterns
 ├── scanner.py               # File scanner for plaintext secrets and permission issues
 ├── agent_guide/             # Agent autonomy package (triggers + system prompts)
 │   ├── __init__.py
@@ -302,7 +302,7 @@ prompt — scripts and cron jobs can read credentials without human intervention
 VaultKnox Autonomous Secrets uses a **key-file-backed security model** similar to SSH keys:
 
 - **Key file**: `~/.hermes/encrypted-secrets/master.key` (chmod 600, owner-only)
-- **Encryption**: Fernet (AES-128-CBC + HMAC-SHA256) with unique random nonces per encryption
+- **Encryption**: AES-256-GCM v2 with unique random nonces per encryption; legacy Fernet v1 files are auto-migrated
 - **Storage**: `secrets.enc` contains the encrypted credentials — safe for backups, git, and session logs
 - **Threat model**: An attacker with root access to the filesystem can decrypt the secrets. This is the accepted trade-off for full autonomy without manual password prompts.
 - **Operational security**: The key file must never appear in session transcripts, memory, or tool output. Ensure proper file permissions (chmod 600) and protect the key file like an SSH private key.
@@ -384,7 +384,7 @@ even if the `.env` file is accidentally exposed.
 
 ```text
 ~/.hermes/encrypted-secrets/
-├── master.key          # Fernet key (AES-128-CBC + HMAC-SHA256, chmod 600, owner-only)
+├── master.key          # autonomous store key (v2 AES-256-GCM, chmod 600, owner-only)
 └── secrets.enc         # Encrypted JSON blob (safe for backups/git)
 
 src/vaultknox/
@@ -407,9 +407,9 @@ hermes-vault secrets env --shell
 VaultKnox v0.4.0 introduces **chat secret detection** and an **agent autonomy package**
 to prevent secrets from leaking into chat logs, session storage, and agent memory.
 
-### 21 Built-In Secret Detectors
+### 26 Built-In Secret Detectors
 
-VaultKnox ships with 21 regex-based detectors covering the most common secret types:
+VaultKnox ships with 26 regex-based detectors covering the most common secret types:
 
 | Category | Detectors |
 |---|---|
@@ -442,7 +442,7 @@ vaultknox scan --format json            # Machine-readable output
 ```
 
 The scanner checks:
-- 21 secret patterns across `.env`, `.json`, `.yaml`, `.yml`, `.sh`, `.bashrc`, `.zshrc`, `.profile`
+- 26 secret patterns across `.env`, `.json`, `.yaml`, `.yml`, `.sh`, `.bashrc`, `.zshrc`, `.profile`
 - Duplicate secrets across files
 - World-readable and group-readable secret files
 

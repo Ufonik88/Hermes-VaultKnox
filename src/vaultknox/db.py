@@ -138,15 +138,16 @@ class VaultDatabase:
         ciphertext: bytes,
         nonce: bytes,
         tag: bytes,
-        metadata: dict[str, Any],
+        metadata: dict[str, Any] | str,
         expires_at: str | None = None,
         search_tokens: str | None = None,
     ) -> None:
         now = utc_now()
+        metadata_value = metadata if isinstance(metadata, str) else json.dumps(metadata, separators=(",", ":"))
         with self.connection() as conn:
             conn.execute(
                 "INSERT INTO secrets(id, type, label, data, nonce, tag, created_at, updated_at, metadata, expires_at, search_tokens) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (secret_id, secret_type, label, ciphertext, nonce, tag, now, now, json.dumps(metadata, separators=(",", ":")), expires_at, search_tokens),
+                (secret_id, secret_type, label, ciphertext, nonce, tag, now, now, metadata_value, expires_at, search_tokens),
             )
 
     def update_secret(
@@ -157,14 +158,15 @@ class VaultDatabase:
         ciphertext: bytes,
         nonce: bytes,
         tag: bytes,
-        metadata: dict[str, Any],
+        metadata: dict[str, Any] | str,
         expires_at: str | None = None,
         search_tokens: str | None = None,
     ) -> None:
+        metadata_value = metadata if isinstance(metadata, str) else json.dumps(metadata, separators=(",", ":"))
         with self.connection() as conn:
             conn.execute(
                 "UPDATE secrets SET type = ?, label = ?, data = ?, nonce = ?, tag = ?, updated_at = ?, metadata = ?, expires_at = ?, search_tokens = ? WHERE id = ?",
-                (secret_type, label, ciphertext, nonce, tag, utc_now(), json.dumps(metadata, separators=(",", ":")), expires_at, search_tokens, secret_id),
+                (secret_type, label, ciphertext, nonce, tag, utc_now(), metadata_value, expires_at, search_tokens, secret_id),
             )
             if conn.total_changes == 0:
                 raise KeyError(f"Secret not found: {secret_id}")
@@ -179,7 +181,7 @@ class VaultDatabase:
     def list_secrets(self) -> list[dict[str, Any]]:
         with self.connection() as conn:
             rows = conn.execute("SELECT id, type, label, metadata, created_at, updated_at, expires_at, search_tokens FROM secrets ORDER BY updated_at DESC").fetchall()
-        return [dict(row) | {"metadata": json.loads(row["metadata"])} for row in rows]
+        return [dict(row) for row in rows]
 
     def delete_secret(self, secret_id: str) -> None:
         with self.connection() as conn:
@@ -191,11 +193,12 @@ class VaultDatabase:
         with self.connection() as conn:
             return conn.execute("SELECT id, type, label, data, nonce, tag, metadata, search_tokens FROM secrets").fetchall()
 
-    def update_secret_crypto(self, secret_id: str, ciphertext: bytes, nonce: bytes, tag: bytes, metadata: dict[str, Any], search_tokens: str | None = None) -> None:
+    def update_secret_crypto(self, secret_id: str, ciphertext: bytes, nonce: bytes, tag: bytes, metadata: dict[str, Any] | str, search_tokens: str | None = None) -> None:
+        metadata_value = metadata if isinstance(metadata, str) else json.dumps(metadata, separators=(",", ":"))
         with self.connection() as conn:
             conn.execute(
                 "UPDATE secrets SET data = ?, nonce = ?, tag = ?, metadata = ?, updated_at = ?, search_tokens = ? WHERE id = ?",
-                (ciphertext, nonce, tag, json.dumps(metadata, separators=(",", ":")), utc_now(), search_tokens, secret_id),
+                (ciphertext, nonce, tag, metadata_value, utc_now(), search_tokens, secret_id),
             )
             if conn.total_changes == 0:
                 raise KeyError(f"Secret not found: {secret_id}")

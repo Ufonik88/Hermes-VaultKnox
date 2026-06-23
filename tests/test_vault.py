@@ -195,6 +195,38 @@ def test_audit_log_does_not_contain_plaintext_secret(vault: VaultKnox) -> None:
     assert '"cvv":"123"' not in audit_text
 
 
+def test_metadata_stored_encrypted_but_returned_masked(vault: VaultKnox) -> None:
+    vault.initialize(STRONG_PASSWORD)
+    vault.unlock(STRONG_PASSWORD)
+    vault.add_secret(
+        STRONG_PASSWORD,
+        "api_openai",
+        "api_key",
+        "OpenAI",
+        {"key": "sk-test", "service": "OpenAI", "scope": "full"},
+    )
+
+    raw_metadata = vault.db.get_secret_row("api_openai")["metadata"]
+    assert "OpenAI" not in raw_metadata
+    assert "scope" not in raw_metadata
+
+    masked = vault.get_masked(STRONG_PASSWORD, "api_openai")
+    assert masked["metadata"] == {"service": "OpenAI", "scope": "full"}
+
+
+def test_bulk_import_metadata_stored_encrypted(vault: VaultKnox) -> None:
+    vault.initialize(STRONG_PASSWORD)
+    vault.unlock(STRONG_PASSWORD)
+    vault.bulk_import_secrets(
+        STRONG_PASSWORD,
+        [{"id": "bulk_key1", "type": "api_key", "label": "Key One", "data": {"key": "sk-1", "service": "Svc1"}}],
+    )
+
+    raw_metadata = vault.db.get_secret_row("bulk_key1")["metadata"]
+    assert "Svc1" not in raw_metadata
+    assert vault.get_masked(STRONG_PASSWORD, "bulk_key1")["metadata"]["service"] == "Svc1"
+
+
 def test_expired_session_is_cleared(vault: VaultKnox) -> None:
     vault.initialize(STRONG_PASSWORD)
     store = SessionStore(vault.paths.session_path, vault.paths.session_lock_path)
@@ -440,4 +472,3 @@ def test_naive_timezone_expiry_is_handled_safely(vault: VaultKnox) -> None:
     result = vault.get_secret(STRONG_PASSWORD, "naive_expired_key")
     assert result["expired"] is True
     assert result["id"] == "naive_expired_key"
-

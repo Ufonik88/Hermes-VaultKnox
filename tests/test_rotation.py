@@ -377,6 +377,28 @@ def test_rotation_updates_all_secrets_atomically(
     assert note["payload"]["content"] == "This is a secret note content."
 
 
+def test_rotation_reencrypts_metadata_and_search_tokens(
+    vault_with_secrets: VaultKnox,
+    tmp_path: Path,
+) -> None:
+    db = vault_with_secrets.db
+    vault_dir = tmp_path / ".runtime"
+    old_row = db.get_secret_row("api_key_1")
+    old_metadata = old_row["metadata"]
+    old_search_tokens = old_row["search_tokens"]
+
+    rotate_master_key(db, vault_dir, OLD_PASSWORD, NEW_PASSWORD)
+
+    new_row = db.get_secret_row("api_key_1")
+    assert new_row["metadata"] != old_metadata
+    assert new_row["search_tokens"] != old_search_tokens
+    assert "TestService" not in new_row["metadata"]
+
+    vault_with_secrets.unlock(NEW_PASSWORD)
+    masked = vault_with_secrets.get_masked(NEW_PASSWORD, "api_key_1")
+    assert masked["metadata"]["service"] == "TestService"
+
+
 # ---------------------------------------------------------------------------
 # Tests for BackupIntegrityError when backup is tampered
 # ---------------------------------------------------------------------------
