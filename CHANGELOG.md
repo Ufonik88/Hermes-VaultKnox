@@ -5,14 +5,23 @@ All notable changes to VaultKnox are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.0] — 2026-06-22
+## [0.7.0] — 2026-06-23
 
 ### Added
 
-- **Policy enforcement test suite** — new `tests/test_policy_enforcement.py` covering deny-by-default behavior, per-service allow/deny, raw-secret access gating, policy TTL clamping, and denial response safety.
+- **Metadata encryption at rest** — secret metadata is now encrypted under a dedicated `vaultknox-metadata` HKDF sub-key using AES-256-GCM, ensuring service names, username hints, and scope info are never stored in plaintext in the SQLite database (`src/vaultknox/core.py`, `src/vaultknox/vault.py`).
+- **Encrypted search index** — deterministic search tokens (AES-GCM with content-derived nonce) are generated per payload field and stored in a `search_index` table, enabling future exact-match search without exposing plaintext values (`src/vaultknox/core.py`, `src/vaultknox/db.py`).
+- **Metadata minimization** — username hints now store only first+last character (e.g. `j***n`); URLs are stored as host-only; full values never appear in metadata fields (`src/vaultknox/types.py`).
+- **Configurable KDF parameters** — `init` command accepts `--kdf-time-cost`, `--kdf-memory-cost`, `--kdf-parallelism`, `--kdf-hash-len`, and `--kdf-type` for Argon2 tuning; parameters are persisted and reused on subsequent unlocks (`src/vaultknox/cli.py`, `src/vaultknox/vault.py`, `src/vaultknox/core.py`).
+- **Vault profiles** — global `--profile <name>` flag routes vault storage to `~/.hermes/vaultknox-profiles/<name>/` for isolated vault environments (`src/vaultknox/config.py`, `src/vaultknox/cli.py`).
+- **`get_token` policy TTL clamping** — one-time token TTL is now clamped by agent/service policy, matching `get_masked` behavior (`src/vaultknox/hermes_tool.py`).
+- **Agent actions reject `master_password` kwarg** — agent-facing actions (`add`, `update`, etc.) now raise `VaultError` if `master_password` is passed, enforcing the session-derived key path (`src/vaultknox/hermes_tool.py`).
+- **MCP scan capability check** — `vaultknox_scan` MCP tool requires `agent_id` and checks `scan_secrets` capability via PolicyEngine (`src/vaultknox/mcp_server.py`).
+- **Policy enforcement test suite** — new `tests/test_policy_enforcement.py` covering deny-by-default behavior, per-service allow/deny, raw-secret access gating, policy TTL clamping, encrypted metadata service resolution, and denial response safety.
 - **OAuth refresh test suite** — new `tests/test_oauth_refresh.py` validating near-expiry refresh persistence and non-throwing refresh failure fallback.
 - **Dashboard hardening tests** — new `tests/test_dashboard.py` validating API token bootstrap/cookie flow and hardened response headers.
 - **Detector coverage expansion** — scanner tests now include additional detector behavior and entropy helper assertions.
+- **Rotation metadata/search re-encryption tests** — `tests/test_rotation.py` now verifies metadata and search tokens are re-encrypted after rotation.
 
 ### Changed
 
@@ -21,13 +30,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Policy Engine v2 activation** — `vault_tool` now enforces policy for agent actions with deny-by-default semantics, action-to-policy mapping, capability checks, service resolution, raw-secret access gating, audited denials, and policy-constrained token TTL.
 - **MCP policy alignment** — MCP tool schemas and handlers now support `agent_id` and route through policy-aware paths for metadata/list/status access.
 - **Autonomous store crypto migration** — autonomous secrets now use AES-256-GCM v2 storage, with legacy Fernet v1 files auto-migrated on load.
-- **PolicyDoctor service resolution** — patch generation now resolves service from secret metadata before fallback heuristics.
+- **PolicyDoctor service resolution** — patch generation now resolves service from secret metadata before fallback heuristics; service resolution also handles encrypted metadata, note types, and type-based fallback.
 - **OAuth retrieval behavior** — OAuth secrets are refreshed on read when near expiry (if provider/client/refresh data is present), with encrypted persistence of refreshed tokens.
 - **Dashboard auth model hardening** — dashboard now supports Authorization/Cookie auth, enforces real token TTL, blocks query-token API access after bootstrap, and sets `Cache-Control: no-store` + `X-Content-Type-Options: nosniff` headers.
 - **Detector and scanner improvements** — added Google API key, GCP private-key marker, Azure connection string, JWT, and high-entropy secret assignment detection; scanner now applies entropy thresholding and placeholder allowlist filtering for generic high-entropy matches.
+- **`get_masked` now accepts password parameter** — `get_masked(password, secret_id, ...)` for consistent API surface across vault operations.
+- **Bulk import uses encrypted metadata and search tokens** — `bulk_import_secrets` now encrypts metadata and generates search tokens for each entry.
+- **Rotation re-encrypts metadata and search tokens** — master key rotation now also re-encrypts metadata and regenerates search tokens under the new key.
+- **CLI `_vault()` accepts profile parameter** — internal factory passes profile to `expand_runtime_path` for profile-based directory resolution.
 
 ### Security
 
+- **Metadata is now encrypted at rest** — service names, username hints, and scope data are AES-256-GCM encrypted under a dedicated HKDF sub-key; plaintext metadata never written to the database.
+- **Username hints minimized** — only first and last character stored (e.g. `j***n`); full username never leaked via metadata.
+- **URLs stored as host-only** — full URLs never appear in metadata; only the hostname component is retained.
+- **Agent actions reject `master_password` kwarg** — prevents accidental password forwarding in session-key flows.
 - **Policy controls are now live** instead of inert for the primary agent-access paths.
 - **Token handling is stricter** on dashboard and policy-constrained on metadata token issuance.
 - **Encrypted metadata/search invariants verified** — metadata and deterministic search tokens are re-encrypted on writes, imports, OAuth refreshes, and master-key rotation.
@@ -35,7 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Verification
 
-- `PYTHONPATH=src python -m pytest -q` → **297 passed**
+- `PYTHONPATH=src python -m pytest -q` → **passed**
 
 ## [0.6.1] — 2026-06-10
 

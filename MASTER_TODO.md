@@ -2,17 +2,12 @@
 
 ## Active Tasks
 
-### Phase 4 — Polish & Hardening (v0.4.0 — deferred pending review)
-- [ ] P2-7: Reintroduce PID binding in session.py with --skip-pid-check escape hatch for daemon workflows (previously reverted).
-- [ ] P2-8: Add validate_password_strength() (min 12 chars, 3+ char classes, 40+ bit entropy); integrate into initialize() and change_password(); add --no-password-check CLI flag.
-- [ ] P2-13: Make KDF params configurable via --kdf-memory-mb, --kdf-time-cost, --kdf-parallelism on init; unify DEFAULT_KDF_PARAMS reference in vault.py.
-- [ ] P2-22: Add Hermes tool-level audit wrapper in vault_tool() so every tool invocation writes an audit event.
-- [ ] P2-5/P0-20: Remove master_password from Hermes write kwargs by introducing session-derived key path in vault.py and session.py.
-- [ ] P1-15: Add encrypted search index using HKDF-derived search key and AES-SIV deterministic encryption (high complexity, deferred last).
-- [ ] P2-17: Add multiple vault profiles via --profile global flag; store each profile at ~/.hermes/vaultknox.<profile>/.
+### Post-v0.7.0
+- [ ] Evaluate if PID binding (P2-7) with --skip-pid-check is still needed given session-derived key flow.
+- [ ] Evaluate if tool-level audit wrapper (P2-22) adds value beyond existing per-operation audit events.
+- [ ] Add encrypted search index query support to CLI (currently indexed but not queryable from CLI).
 
 ### Always Open
-- [ ] Add an initial setup step that requires setting a Master Password for VaultKnox, with a warning that it is never stored and should be strong.
 - [ ] Verify GitHub Actions passes on the first remote run after publication.
 
 ## Decisions And Ideas

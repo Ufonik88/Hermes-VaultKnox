@@ -200,6 +200,7 @@ def vault_tool(
             token_ttl = _clamp_token_ttl(paths, vault, agent_id, kwargs["secret_id"], kwargs.get("token_ttl_seconds", 300))
             
             result = vault.get_masked(
+                None,
                 kwargs["secret_id"],
                 purpose=kwargs.get("purpose"),
                 token_ttl_seconds=token_ttl,

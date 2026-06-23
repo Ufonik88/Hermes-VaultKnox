@@ -97,6 +97,14 @@ Compromise of any sub-key does not expose the master key or any other sub-key's 
 - **v0.7.0** — OAuth secrets now auto-refresh on read when near expiry, with safe failure fallback (`refresh_failed`) and no token logging
 - **v0.7.0** — Dashboard hardening: token TTL enforcement, HttpOnly cookie/Authorization support, no `?token=` for API calls after bootstrap, and hardened response headers
 - **v0.7.0** — Detector/scanner improvements: added Google API key, GCP key material, Azure connection string, JWT, and high-entropy assignment detection with entropy gating + placeholder allowlist
+- **v0.7.0** — Metadata encryption at rest: service names, username hints, and scope data are AES-256-GCM encrypted under a dedicated HKDF sub-key
+- **v0.7.0** — Encrypted search index: deterministic search tokens generated per payload field for future exact-match search
+- **v0.7.0** — Metadata minimization: username hints store first+last character only; URLs stored as host-only
+- **v0.7.0** — Configurable KDF parameters via `--kdf-*` flags on `init` (time cost, memory cost, parallelism, hash length, Argon2 variant)
+- **v0.7.0** — Vault profiles via `--profile <name>` global flag for isolated vault environments
+- **v0.7.0** — Agent actions now reject `master_password` kwarg, enforcing the session-derived key path
+- **v0.7.0** — MCP `vaultknox_scan` requires `agent_id` and checks `scan_secrets` capability
+- **v0.7.0** — `get_token` TTL clamped by agent/service policy, matching `get_masked` behavior
 - **v0.6.1** — Public package exports fixed: `from vaultknox import AutonomousSecretsStore` now works as documented
 - **v0.6.1** — Timezone-naive token expiry and lockout timestamps handled safely (extends v0.6.0 expiry fix)
 - **v0.6.0** — MCP Server crash fixed: `Path` import added, dead imports removed, path resolution corrected so `vaultknox_scan` and health tools execute without NameError
