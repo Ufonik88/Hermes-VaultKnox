@@ -34,6 +34,12 @@ from vaultknox.core import (
     encrypt_payload,
     generate_salt,
     generate_token,
+    validate_kdf_params,
+    derive_search_key,
+    encrypt_search_token,
+    derive_metadata_key,
+    encrypt_metadata,
+    decrypt_metadata,
 )
 from vaultknox.db import VaultDatabase
 from vaultknox.exceptions import VaultError
@@ -91,17 +97,20 @@ class VaultKnox:
         max_attempts: int = DEFAULT_MAX_ATTEMPTS,
         lockout_minutes: int = DEFAULT_LOCKOUT_MINUTES,
         skip_password_check: bool = False,
+        kdf_params: dict[str, Any] | None = None,
     ) -> None:
         if self.paths.db_path.exists():
             raise VaultError("Vault already initialized")
         validate_password_strength_or_raise(password, skip_password_check)
+        if kdf_params is not None:
+            validate_kdf_params(kdf_params)
         self.db.initialize()
         salt = generate_salt()
-        master_key = derive_master_key(password, salt)
+        master_key = derive_master_key(password, salt, kdf_params)
         verification = encrypt_payload(derive_scoped_key(master_key, b"vaultknox-verifier"), {"ok": True})
         self.db.set_config("vault_version", "1")
         self.db.set_config("argon2_salt", salt.hex())
-        self.db.set_config("kdf_params", json.dumps(DEFAULT_KDF_PARAMS, separators=(",", ":")))
+        self.db.set_config("kdf_params", json.dumps(kdf_params or DEFAULT_KDF_PARAMS, separators=(",", ":")))
         self.db.set_config("verifier", json.dumps({"nonce": verification.nonce.hex(), "ciphertext": verification.ciphertext.hex(), "tag": verification.tag.hex()}, separators=(",", ":")))
         self.db.set_config("auto_lock_minutes", str(auto_lock_minutes))
         self.db.set_config("max_attempts", str(max_attempts))
@@ -124,7 +133,9 @@ class VaultKnox:
         auto_lock_minutes = int(self.db.get_config("auto_lock_minutes") or DEFAULT_AUTO_LOCK_MINUTES)
         # Derive entry key and store in session
         salt = bytes.fromhex(self.db.get_config("argon2_salt") or "")
-        master_key = derive_master_key(password, salt)
+        kdf_params_str = self.db.get_config("kdf_params")
+        kdf_params = json.loads(kdf_params_str) if kdf_params_str else DEFAULT_KDF_PARAMS
+        master_key = derive_master_key(password, salt, kdf_params)
         entry_key = derive_scoped_key(master_key)
         state = self.sessions.write(auto_lock_minutes, entry_key=entry_key)
         write_audit_event(self.paths.audit_log_path, "unlock", "success")
@@ -136,14 +147,41 @@ class VaultKnox:
 
     def list_secrets(self) -> list[dict[str, Any]]:
         self._require_unlocked()
-        return self.db.list_secrets()
+        secrets = self.db.list_secrets()
+        # Decrypt metadata for each secret
+        meta_key = derive_metadata_key(self._session_entry_key())
+        for secret in secrets:
+            metadata_encrypted = secret.get("metadata")
+            if metadata_encrypted:
+                try:
+                    secret["metadata"] = decrypt_metadata(meta_key, metadata_encrypted)
+                except Exception:
+                    secret["metadata"] = {}
+            else:
+                secret["metadata"] = {}
+        return secrets
 
     def add_secret(self, password: str | None, secret_id: str, secret_type: str, label: str, payload: dict[str, Any], expires_at: str | None = None) -> dict[str, Any]:
         key = self._session_entry_key() if password is None else self._entry_key(password)
         validate_secret(secret_type, payload)
         metadata = build_metadata(secret_type, payload)
+        
+        # Encrypt metadata
+        meta_key = derive_metadata_key(key)
+        metadata_encrypted = encrypt_metadata(meta_key, metadata)
+        
         encrypted = encrypt_payload(key, payload)
-        self.db.insert_secret(secret_id, secret_type, label, encrypted.ciphertext, encrypted.nonce, encrypted.tag, metadata, expires_at)
+        
+        # Generate search tokens for encrypted search index
+        search_key = derive_search_key(key)
+        search_tokens = []
+        for field_name, field_value in payload.items():
+            if isinstance(field_value, str) and field_value:
+                token = encrypt_search_token(search_key, f"{field_name}:{field_value}")
+                search_tokens.append(token)
+        search_tokens_str = ",".join(search_tokens) if search_tokens else None
+        
+        self.db.insert_secret(secret_id, secret_type, label, encrypted.ciphertext, encrypted.nonce, encrypted.tag, metadata_encrypted, expires_at, search_tokens_str)
         write_audit_event(self.paths.audit_log_path, "add", "success", secret_id=secret_id)
         return masked_view(secret_id, secret_type, label, metadata)
 
@@ -151,8 +189,23 @@ class VaultKnox:
         key = self._session_entry_key() if password is None else self._entry_key(password)
         validate_secret(secret_type, payload)
         metadata = build_metadata(secret_type, payload)
+        
+        # Encrypt metadata
+        meta_key = derive_metadata_key(key)
+        metadata_encrypted = encrypt_metadata(meta_key, metadata)
+        
         encrypted = encrypt_payload(key, payload)
-        self.db.update_secret(secret_id, secret_type, label, encrypted.ciphertext, encrypted.nonce, encrypted.tag, metadata, expires_at)
+        
+        # Generate search tokens for encrypted search index
+        search_key = derive_search_key(key)
+        search_tokens = []
+        for field_name, field_value in payload.items():
+            if isinstance(field_value, str) and field_value:
+                token = encrypt_search_token(search_key, f"{field_name}:{field_value}")
+                search_tokens.append(token)
+        search_tokens_str = ",".join(search_tokens) if search_tokens else None
+        
+        self.db.update_secret(secret_id, secret_type, label, encrypted.ciphertext, encrypted.nonce, encrypted.tag, metadata_encrypted, expires_at, search_tokens_str)
         write_audit_event(self.paths.audit_log_path, "update", "success", secret_id=secret_id)
         return masked_view(secret_id, secret_type, label, metadata)
 
@@ -169,6 +222,18 @@ class VaultKnox:
         except (InvalidTag, ValueError, KeyError) as exc:
             write_audit_event(self.paths.audit_log_path, "get_raw", "failure", secret_id=secret_id)
             raise VaultError("Secret decryption failed; data may be corrupted") from exc
+        
+        # Decrypt metadata
+        meta_key = derive_metadata_key(key)
+        metadata_encrypted = row["metadata"]
+        if metadata_encrypted:
+            try:
+                metadata = decrypt_metadata(meta_key, metadata_encrypted)
+            except Exception:
+                metadata = {}
+        else:
+            metadata = {}
+        
         write_audit_event(self.paths.audit_log_path, "get_raw", "success", secret_id=secret_id)
         if row["type"] == "oauth":
             secret = self._maybe_refresh_oauth_secret(key, row, secret)
@@ -177,6 +242,7 @@ class VaultKnox:
             "type": row["type"],
             "label": row["label"],
             "payload": secret,
+            "metadata": metadata,
         }
 
     def _maybe_refresh_oauth_secret(self, key: bytes, row: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -221,14 +287,26 @@ class VaultKnox:
             write_audit_event(self.paths.audit_log_path, "oauth_refresh", "failure", secret_id=str(row["id"]))
             return failed_payload
 
-    def get_masked(self, secret_id: str, purpose: str | None = None, token_ttl_seconds: int = DEFAULT_TOKEN_TTL_SECONDS) -> dict[str, Any]:
+    def get_masked(self, password: str | None, secret_id: str, purpose: str | None = None, token_ttl_seconds: int = DEFAULT_TOKEN_TTL_SECONDS) -> dict[str, Any]:
+        key = self._session_entry_key() if password is None else self._entry_key(password)
         self._require_unlocked()
         row = self.db.get_secret_row(secret_id)
         expires_at = row["expires_at"] if "expires_at" in row.keys() else None
         if expires_at and _parse_utc_datetime(expires_at) <= datetime.now(timezone.utc):
             write_audit_event(self.paths.audit_log_path, "get_masked", "expired", secret_id=secret_id)
             return {"expired": True, "expires_at": expires_at, "id": secret_id}
-        metadata = json.loads(row["metadata"])
+        
+        # Decrypt metadata
+        meta_key = derive_metadata_key(key)
+        metadata_encrypted = row["metadata"]
+        if metadata_encrypted:
+            try:
+                metadata = decrypt_metadata(meta_key, metadata_encrypted)
+            except Exception:
+                metadata = {}
+        else:
+            metadata = {}
+        
         token = None
         if purpose:
             token = self.issue_token(secret_id, purpose, token_ttl_seconds)
@@ -380,7 +458,8 @@ class VaultKnox:
     def bulk_import_secrets(self, password: str | None, entries: list[dict[str, Any]]) -> dict[str, Any]:
         """Import multiple secrets in a single operation. All entries are validated before any are written."""
         key = self._session_entry_key() if password is None else self._entry_key(password)
-        prepared: list[tuple[str, str, str, dict[str, Any], EncryptedPayload, str | None]] = []
+        search_key = derive_search_key(key)
+        prepared: list[tuple[str, str, str, dict[str, Any], EncryptedPayload, str | None, str | None]] = []
         for i, entry in enumerate(entries):
             try:
                 secret_id = entry["id"]
@@ -396,15 +475,24 @@ class VaultKnox:
                 raise VaultError(f"Entry {i} ('{secret_id}'): {exc}") from exc
             metadata = build_metadata(secret_type, payload)
             encrypted = encrypt_payload(key, payload)
-            prepared.append((secret_id, secret_type, label, metadata, encrypted, expires_at))
+            
+            # Generate search tokens
+            search_tokens = []
+            for field_name, field_value in payload.items():
+                if isinstance(field_value, str) and field_value:
+                    token = encrypt_search_token(search_key, f"{field_name}:{field_value}")
+                    search_tokens.append(token)
+            search_tokens_str = ",".join(search_tokens) if search_tokens else None
+            
+            prepared.append((secret_id, secret_type, label, metadata, encrypted, expires_at, search_tokens_str))
 
         imported: list[str] = []
         try:
             with self.db.connection() as conn:
-                for secret_id, secret_type, label, metadata, encrypted, expires_at in prepared:
+                for secret_id, secret_type, label, metadata, encrypted, expires_at, search_tokens_str in prepared:
                     now = datetime.now(timezone.utc).isoformat()
                     conn.execute(
-                        "INSERT INTO secrets(id, type, label, data, nonce, tag, created_at, updated_at, metadata, expires_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO secrets(id, type, label, data, nonce, tag, created_at, updated_at, metadata, expires_at, search_tokens) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             secret_id,
                             secret_type,
@@ -416,6 +504,7 @@ class VaultKnox:
                             now,
                             json.dumps(metadata, separators=(",", ":")),
                             expires_at,
+                            search_tokens_str,
                         ),
                     )
                     imported.append(secret_id)
@@ -434,7 +523,9 @@ class VaultKnox:
     def _entry_key(self, password: str) -> bytes:
         self._verify_password(password)
         salt = bytes.fromhex(self.db.get_config("argon2_salt") or "")
-        master_key = derive_master_key(password, salt)
+        kdf_params_str = self.db.get_config("kdf_params")
+        kdf_params = json.loads(kdf_params_str) if kdf_params_str else DEFAULT_KDF_PARAMS
+        master_key = derive_master_key(password, salt, kdf_params)
         return derive_scoped_key(master_key)
 
     def _session_entry_key(self) -> bytes:
@@ -453,7 +544,9 @@ class VaultKnox:
             raise VaultError("Vault is not initialized")
         self._check_lockout()
         salt = bytes.fromhex(self.db.get_config("argon2_salt") or "")
-        verifier_key = derive_scoped_key(derive_master_key(password, salt), b"vaultknox-verifier")
+        kdf_params_str = self.db.get_config("kdf_params")
+        kdf_params = json.loads(kdf_params_str) if kdf_params_str else DEFAULT_KDF_PARAMS
+        verifier_key = derive_scoped_key(derive_master_key(password, salt, kdf_params), b"vaultknox-verifier")
         verifier_data = json.loads(self.db.get_config("verifier") or "{}")
         try:
             decrypt_payload(

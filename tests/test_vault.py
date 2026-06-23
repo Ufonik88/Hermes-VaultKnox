@@ -34,7 +34,7 @@ def test_initialize_add_and_mask(vault: VaultKnox) -> None:
         },
     )
 
-    masked = vault.get_masked("revolut_card", purpose="booking")
+    masked = vault.get_masked(STRONG_PASSWORD, "revolut_card", purpose="booking")
 
     assert masked["metadata"]["last4"] == "1111"
     assert masked["token"].startswith("vlt_")
@@ -103,7 +103,7 @@ def test_export_and_import_round_trip(tmp_path: Path) -> None:
     destination.import_vault(STRONG_PASSWORD, str(export_file))
 
     destination.unlock(STRONG_PASSWORD)
-    imported = destination.get_masked("api_openai")
+    imported = destination.get_masked(STRONG_PASSWORD, "api_openai")
     assert imported["metadata"]["service"] == "OpenAI"
 
 

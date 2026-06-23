@@ -51,9 +51,15 @@ def build_metadata(secret_type: str, payload: dict[str, Any]) -> dict[str, Any]:
     if secret_type == "credential":
         metadata = {}
         if payload.get("username"):
-            metadata["username_hint"] = payload["username"]
+            # Store only first char + last char as hint, never full username
+            username = payload["username"]
+            if len(username) >= 2:
+                metadata["username_hint"] = username[0] + "*" * (len(username) - 2) + username[-1]
+            else:
+                metadata["username_hint"] = "*" * len(username)
         if payload.get("url"):
-            metadata["url"] = payload["url"]
+            parsed = urlsplit(payload["url"])
+            metadata["host"] = parsed.hostname or ""
         return metadata
     if secret_type == "api_key":
         return {

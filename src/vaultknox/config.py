@@ -35,9 +35,13 @@ class VaultPaths:
         return self.base_dir / "session.lock"
 
 
-def expand_runtime_path(path: str | Path | None = None) -> VaultPaths:
+def expand_runtime_path(path: str | Path | None = None, profile: str | None = None) -> VaultPaths:
     if path is None:
-        path = Path.home() / ".hermes" / "vaultknox"
+        base = Path.home() / ".hermes"
+        if profile:
+            path = base / "vaultknox-profiles" / profile
+        else:
+            path = base / "vaultknox"
     return VaultPaths(Path(path).expanduser().resolve())
 
 

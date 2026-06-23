@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS secrets (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     metadata TEXT NOT NULL,
-    expires_at TEXT
+    expires_at TEXT,
+    search_tokens TEXT
 );
 
 CREATE TABLE IF NOT EXISTS vault_config (
@@ -42,6 +43,13 @@ CREATE TABLE IF NOT EXISTS vault_tokens_revoked (
     revoked_at TEXT NOT NULL,
     reason TEXT
 );
+
+CREATE TABLE IF NOT EXISTS search_index (
+    token TEXT PRIMARY KEY,
+    secret_id TEXT NOT NULL,
+    field TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 """
 
 MIGRATIONS = """
@@ -55,6 +63,7 @@ CREATE TABLE IF NOT EXISTS vault_tokens_revoked (
 # Applied once per connection via ALTER TABLE (idempotent via exception suppression)
 _COLUMN_MIGRATIONS: list[str] = [
     "ALTER TABLE secrets ADD COLUMN expires_at TEXT",
+    "ALTER TABLE secrets ADD COLUMN search_tokens TEXT",
 ]
 
 
@@ -121,19 +130,41 @@ class VaultDatabase:
                 (key, value),
             )
 
-    def insert_secret(self, secret_id: str, secret_type: str, label: str, ciphertext: bytes, nonce: bytes, tag: bytes, metadata: dict[str, Any], expires_at: str | None = None) -> None:
+    def insert_secret(
+        self,
+        secret_id: str,
+        secret_type: str,
+        label: str,
+        ciphertext: bytes,
+        nonce: bytes,
+        tag: bytes,
+        metadata: dict[str, Any],
+        expires_at: str | None = None,
+        search_tokens: str | None = None,
+    ) -> None:
         now = utc_now()
         with self.connection() as conn:
             conn.execute(
-                "INSERT INTO secrets(id, type, label, data, nonce, tag, created_at, updated_at, metadata, expires_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (secret_id, secret_type, label, ciphertext, nonce, tag, now, now, json.dumps(metadata, separators=(",", ":")), expires_at),
+                "INSERT INTO secrets(id, type, label, data, nonce, tag, created_at, updated_at, metadata, expires_at, search_tokens) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (secret_id, secret_type, label, ciphertext, nonce, tag, now, now, json.dumps(metadata, separators=(",", ":")), expires_at, search_tokens),
             )
 
-    def update_secret(self, secret_id: str, secret_type: str, label: str, ciphertext: bytes, nonce: bytes, tag: bytes, metadata: dict[str, Any], expires_at: str | None = None) -> None:
+    def update_secret(
+        self,
+        secret_id: str,
+        secret_type: str,
+        label: str,
+        ciphertext: bytes,
+        nonce: bytes,
+        tag: bytes,
+        metadata: dict[str, Any],
+        expires_at: str | None = None,
+        search_tokens: str | None = None,
+    ) -> None:
         with self.connection() as conn:
             conn.execute(
-                "UPDATE secrets SET type = ?, label = ?, data = ?, nonce = ?, tag = ?, updated_at = ?, metadata = ?, expires_at = ? WHERE id = ?",
-                (secret_type, label, ciphertext, nonce, tag, utc_now(), json.dumps(metadata, separators=(",", ":")), expires_at, secret_id),
+                "UPDATE secrets SET type = ?, label = ?, data = ?, nonce = ?, tag = ?, updated_at = ?, metadata = ?, expires_at = ?, search_tokens = ? WHERE id = ?",
+                (secret_type, label, ciphertext, nonce, tag, utc_now(), json.dumps(metadata, separators=(",", ":")), expires_at, search_tokens, secret_id),
             )
             if conn.total_changes == 0:
                 raise KeyError(f"Secret not found: {secret_id}")
@@ -147,7 +178,7 @@ class VaultDatabase:
 
     def list_secrets(self) -> list[dict[str, Any]]:
         with self.connection() as conn:
-            rows = conn.execute("SELECT id, type, label, metadata, created_at, updated_at, expires_at FROM secrets ORDER BY updated_at DESC").fetchall()
+            rows = conn.execute("SELECT id, type, label, metadata, created_at, updated_at, expires_at, search_tokens FROM secrets ORDER BY updated_at DESC").fetchall()
         return [dict(row) | {"metadata": json.loads(row["metadata"])} for row in rows]
 
     def delete_secret(self, secret_id: str) -> None:
@@ -158,13 +189,13 @@ class VaultDatabase:
 
     def list_secret_rows_raw(self) -> list[sqlite3.Row]:
         with self.connection() as conn:
-            return conn.execute("SELECT id, type, label, data, nonce, tag, metadata FROM secrets").fetchall()
+            return conn.execute("SELECT id, type, label, data, nonce, tag, metadata, search_tokens FROM secrets").fetchall()
 
-    def update_secret_crypto(self, secret_id: str, ciphertext: bytes, nonce: bytes, tag: bytes, metadata: dict[str, Any]) -> None:
+    def update_secret_crypto(self, secret_id: str, ciphertext: bytes, nonce: bytes, tag: bytes, metadata: dict[str, Any], search_tokens: str | None = None) -> None:
         with self.connection() as conn:
             conn.execute(
-                "UPDATE secrets SET data = ?, nonce = ?, tag = ?, metadata = ?, updated_at = ? WHERE id = ?",
-                (ciphertext, nonce, tag, json.dumps(metadata, separators=(",", ":")), utc_now(), secret_id),
+                "UPDATE secrets SET data = ?, nonce = ?, tag = ?, metadata = ?, updated_at = ?, search_tokens = ? WHERE id = ?",
+                (ciphertext, nonce, tag, json.dumps(metadata, separators=(",", ":")), utc_now(), search_tokens, secret_id),
             )
             if conn.total_changes == 0:
                 raise KeyError(f"Secret not found: {secret_id}")
@@ -174,6 +205,10 @@ class VaultDatabase:
             conn.execute(
                 "INSERT INTO vault_tokens(token, secret_id, purpose, created_at, expires_at, used_at) VALUES(?, ?, ?, ?, ?, NULL)",
                 (token, secret_id, purpose, utc_now(), expires_at),
+            )
+            conn.execute(
+                "INSERT INTO search_index(token, secret_id, field, created_at) VALUES(?, ?, ?, ?)",
+                (token, secret_id, "token", utc_now()),
             )
 
     def mark_token_used(self, token: str) -> None:
@@ -200,6 +235,7 @@ class VaultDatabase:
                 "INSERT OR REPLACE INTO vault_tokens_revoked(token, revoked_at, reason) VALUES(?, ?, ?)",
                 (token, utc_now(), reason),
             )
+            conn.execute("DELETE FROM search_index WHERE token = ?", (token,))
 
     def is_token_revoked(self, token: str) -> bool:
         with self.connection() as conn:
@@ -209,11 +245,13 @@ class VaultDatabase:
     def delete_token(self, token: str) -> None:
         with self.connection() as conn:
             conn.execute("DELETE FROM vault_tokens WHERE token = ?", (token,))
+            conn.execute("DELETE FROM search_index WHERE token = ?", (token,))
 
     def cleanup_expired_tokens(self) -> int:
         with self.connection() as conn:
             now = utc_now()
             cursor = conn.execute("DELETE FROM vault_tokens WHERE expires_at < ?", (now,))
+            conn.execute("DELETE FROM search_index WHERE token IN (SELECT token FROM vault_tokens WHERE expires_at < ?)", (now,))
             return cursor.rowcount
 
     def vacuum(self) -> None:

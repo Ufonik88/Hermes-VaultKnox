@@ -22,8 +22,8 @@ class _VaultGroup(click.Group):
             raise click.ClickException(str(exc)) from exc
 
 
-def _vault(runtime_dir: str | None) -> VaultKnox:
-    return VaultKnox(expand_runtime_path(runtime_dir))
+def _vault(runtime_dir: str | None, profile: str | None = None) -> VaultKnox:
+    return VaultKnox(expand_runtime_path(runtime_dir, profile))
 
 
 def _prompt_password(confirm: bool = False) -> str:
@@ -61,11 +61,12 @@ def _prompt_secret_payload(secret_type: str) -> dict[str, Any]:
 
 @click.group(cls=_VaultGroup)
 @click.option("--runtime-dir", type=click.Path(path_type=Path), default=None, help="Override the runtime vault directory.")
+@click.option("--profile", type=str, default=None, help="Vault profile name (uses ~/.hermes/vaultknox-profiles/<name>).")
 @click.option("--logo", "show_logo", is_flag=True, default=False, help="Display the VaultKnox ASCII logo before command output.")
 @click.pass_context
-def main(ctx: click.Context, runtime_dir: Path | None, show_logo: bool) -> None:
+def main(ctx: click.Context, runtime_dir: Path | None, profile: str | None, show_logo: bool) -> None:
     ctx.ensure_object(dict)
-    ctx.obj["vault"] = _vault(str(runtime_dir) if runtime_dir else None)
+    ctx.obj["vault"] = _vault(str(runtime_dir) if runtime_dir else None, profile)
     if show_logo:
         click.echo(get_logo_banner())
 
@@ -172,12 +173,24 @@ def oauth_login(obj: dict[str, VaultKnox], provider: str, client_id: str, client
 @main.command()
 @click.option("--auto-lock-minutes", default=15, show_default=True, type=int)
 @click.option("--no-password-check", is_flag=True, default=False, help="Skip password strength validation.")
+@click.option("--kdf-time-cost", default=3, show_default=True, type=int, help="Argon2 time cost (iterations).")
+@click.option("--kdf-memory-cost", default=65536, show_default=True, type=int, help="Argon2 memory cost (KB).")
+@click.option("--kdf-parallelism", default=4, show_default=True, type=int, help="Argon2 parallelism (lanes).")
+@click.option("--kdf-hash-len", default=32, show_default=True, type=int, help="Argon2 hash length (bytes).")
+@click.option("--kdf-type", default="argon2id", show_default=True, type=click.Choice(["argon2id", "argon2i", "argon2d"]), help="Argon2 variant.")
 @click.pass_obj
-def init(obj: dict[str, VaultKnox], auto_lock_minutes: int, no_password_check: bool) -> None:
+def init(obj: dict[str, VaultKnox], auto_lock_minutes: int, no_password_check: bool, kdf_time_cost: int, kdf_memory_cost: int, kdf_parallelism: int, kdf_hash_len: int, kdf_type: str) -> None:
     """Initialize a new vault with a master password."""
     vault = obj["vault"]
     password = _prompt_password(confirm=True)
-    vault.initialize(password, auto_lock_minutes=auto_lock_minutes, skip_password_check=no_password_check)
+    kdf_params = {
+        "time_cost": kdf_time_cost,
+        "memory_cost": kdf_memory_cost,
+        "parallelism": kdf_parallelism,
+        "hash_len": kdf_hash_len,
+        "type": kdf_type,
+    }
+    vault.initialize(password, auto_lock_minutes=auto_lock_minutes, skip_password_check=no_password_check, kdf_params=kdf_params)
     click.echo("Vault initialized")
 
 
