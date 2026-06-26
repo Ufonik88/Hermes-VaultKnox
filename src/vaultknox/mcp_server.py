@@ -21,7 +21,7 @@ from vaultknox.hermes_tool import vault_tool
 logger = logging.getLogger("vaultknox.mcp")
 
 
-def _mcp_vault_paths():
+def _mcp_vault_paths() -> "VaultPaths":
     """Resolve the vault paths MCP tool calls should use.
 
     The Click CLI accepts ``--runtime-dir`` before ``mcp``, but the MCP
@@ -126,12 +126,8 @@ def _create_server() -> Server:
         from vaultknox.policy import PolicyEngine
         from vaultknox.scanner import SecretScanner
 
-        # Import here to avoid circular imports
-        from vaultknox.vault import VaultKnox
-
         try:
             vault_paths = _mcp_vault_paths()
-            VaultKnox(vault_paths)
 
             agent_id = (arguments or {}).get("agent_id")
 

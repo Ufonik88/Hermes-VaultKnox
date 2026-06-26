@@ -94,6 +94,14 @@ class TestMCPStatusCodePath:
 
         assert paths.base_dir == runtime_dir.resolve()
 
+    def test_mcp_vault_paths_defaults_when_env_unset(self, monkeypatch) -> None:
+        monkeypatch.delenv("VAULTKNOX_RUNTIME_DIR", raising=False)
+
+        paths = _mcp_vault_paths()
+
+        expected = _Path.home() / ".hermes" / "vaultknox"
+        assert paths.base_dir == expected.resolve()
+
 
 class TestMCPErrorPaths:
     """The call_tool branches for locked vault / missing ids return structured errors (no crash)."""
