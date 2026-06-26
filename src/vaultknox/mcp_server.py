@@ -10,7 +10,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mcp.server import Server
 from mcp.types import TextContent, Tool
@@ -18,10 +18,13 @@ from mcp.types import TextContent, Tool
 from vaultknox import __version__
 from vaultknox.hermes_tool import vault_tool
 
+if TYPE_CHECKING:
+    from vaultknox.config import VaultPaths
+
 logger = logging.getLogger("vaultknox.mcp")
 
 
-def _mcp_vault_paths() -> "VaultPaths":
+def _mcp_vault_paths() -> VaultPaths:
     """Resolve the vault paths MCP tool calls should use.
 
     The Click CLI accepts ``--runtime-dir`` before ``mcp``, but the MCP
