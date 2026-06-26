@@ -11,7 +11,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path as _Path
 
-from vaultknox.mcp_server import _TOOL_SCHEMAS, _create_server, run_mcp_server
+from vaultknox.mcp_server import _TOOL_SCHEMAS, _create_server, _mcp_vault_paths, run_mcp_server
 
 
 class TestMCPServerImportAndConstruction:
@@ -85,6 +85,14 @@ class TestMCPStatusCodePath:
             assert hasattr(status, "initialized")
             assert hasattr(status, "unlocked")
             assert hasattr(status, "secret_count")
+
+    def test_mcp_vault_paths_honors_runtime_dir_env(self, monkeypatch, tmp_path) -> None:
+        runtime_dir = tmp_path / "runtime"
+        monkeypatch.setenv("VAULTKNOX_RUNTIME_DIR", str(runtime_dir))
+
+        paths = _mcp_vault_paths()
+
+        assert paths.base_dir == runtime_dir.resolve()
 
 
 class TestMCPErrorPaths:
