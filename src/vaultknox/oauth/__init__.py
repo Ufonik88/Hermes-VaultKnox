@@ -198,6 +198,14 @@ def wait_for_callback(host: str, port: int, timeout: float = 300.0) -> tuple[str
     return server._oauth_code, server._oauth_state
 
 
+
+
+def _validate_https_token_url(token_url: str) -> None:
+    """Reject non-HTTPS OAuth token endpoints before network access."""
+    parsed = urllib.parse.urlparse(token_url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise OAuthTokenError("OAuth token URL must be an HTTPS URL")
+
 # ── Token Exchange ────────────────────────────────────────────────────────────────
 
 
@@ -236,6 +244,8 @@ def exchange_code(
     Raises:
         OAuthTokenError: If exchange fails
     """
+    _validate_https_token_url(token_url)
+
     data = {
         "grant_type": "authorization_code",
         "client_id": client_id,
@@ -251,7 +261,7 @@ def exchange_code(
             data=urllib.parse.urlencode(data).encode("utf-8"),
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
-        with urlopen(request, timeout=30) as response:
+        with urlopen(request, timeout=30) as response:  # nosec
             result = json.loads(response.read().decode("utf-8"))
     except URLError as e:
         raise OAuthTokenError(f"Token exchange failed: {e}") from e
@@ -288,6 +298,8 @@ def refresh_access_token(
     Returns:
         TokenResponse with new access/refresh tokens
     """
+    _validate_https_token_url(token_url)
+
     data = {
         "grant_type": "refresh_token",
         "client_id": client_id,
@@ -301,7 +313,7 @@ def refresh_access_token(
             data=urllib.parse.urlencode(data).encode("utf-8"),
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
-        with urlopen(request, timeout=30) as response:
+        with urlopen(request, timeout=30) as response:  # nosec
             result = json.loads(response.read().decode("utf-8"))
     except URLError as e:
         raise OAuthTokenError(f"Token refresh failed: {e}") from e

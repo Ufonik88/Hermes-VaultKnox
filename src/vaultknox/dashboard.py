@@ -130,14 +130,12 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
         VaultKnox Dashboard v{{version}} • Token expires in --s
     </div>
     <script>
-        const bootstrapToken = new URLSearchParams(window.location.search).get('token');
+        function esc(value) {
+            return String(value ?? '').replace(/[&<>\"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[ch]));
+        }
         
         async function api(endpoint) {
-            const headers = {};
-            if (bootstrapToken) {
-                headers['Authorization'] = 'Bearer ' + bootstrapToken;
-            }
-            const resp = await fetch('/api/' + endpoint, { headers });
+            const resp = await fetch('/api/' + endpoint);
             return resp.json();
         }
         
@@ -162,7 +160,7 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
             }
             
             const tbody = document.querySelector('#healthTable tbody');
-            tbody.innerHTML = checks.map(c => '<tr><td>' + c.name + '</td><td><span class="badge">' + c.status + '</span></td><td>' + (c.message || '') + '</td></tr>').join('');
+            tbody.innerHTML = checks.map(c => '<tr><td>' + esc(c.name) + '</td><td><span class="badge">' + esc(c.status) + '</span></td><td>' + esc(c.message || '') + '</td></tr>').join('');
         }
         
         async function loadCredentials() {
@@ -172,8 +170,9 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
             
             const tbody = document.querySelector('#credentialsTable tbody');
             const rows = secrets.map(s => {
-                const badge = '<span class="badge badge-' + s.type + '">' + s.type + '</span>';
-                return '<tr><td>' + s.id + '</td><td>' + badge + '</td><td>' + s.label + '</td><td>' + (s.created_at || '') + '</td><td>' + (s.expires_at || '-') + '</td></tr>';
+                const type = esc(s.type);
+                const badge = '<span class="badge badge-' + type + '">' + type + '</span>';
+                return '<tr><td>' + esc(s.id) + '</td><td>' + badge + '</td><td>' + esc(s.label) + '</td><td>' + esc(s.created_at || '') + '</td><td>' + esc(s.expires_at || '-') + '</td></tr>';
             }).join('');
             tbody.innerHTML = rows || '<tr><td colspan="5" style="text-align:center;color:#8b949e">No secrets stored</td></tr>';
         }
@@ -183,7 +182,7 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
             const entries = data.entries || [];
             const tbody = document.querySelector('#auditTable tbody');
             const rows = entries.slice(0, 20).map(e => {
-                return '<tr><td>' + e.time + '</td><td>' + e.action + '</td><td><span class="badge">' + e.status + '</span></td><td>' + (e.secret_id || '-') + '</td></tr>';
+                return '<tr><td>' + esc(e.time) + '</td><td>' + esc(e.action) + '</td><td><span class="badge">' + esc(e.status) + '</span></td><td>' + esc(e.secret_id || '-') + '</td></tr>';
             }).join('');
             tbody.innerHTML = rows || '<tr><td colspan="4" style="text-align:center;color:#8b949e">No audit entries</td></tr>';
         }
@@ -197,7 +196,7 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
             const findings = data.findings || [];
             
             document.getElementById('scanResults').innerHTML = '<p>Found ' + findings.length + ' issues</p>' + 
-                findings.map(f => '<div class="card" style="margin:0.5rem 0"><strong>' + f.detector + '</strong> in ' + f.file + ' (line ' + f.line + ')</div>').join('');
+                findings.map(f => '<div class="card" style="margin:0.5rem 0"><strong>' + esc(f.detector) + '</strong> in ' + esc(f.file) + ' (line ' + esc(f.line) + ')</div>').join('');
             
             btn.disabled = false;
             btn.textContent = 'Run Scan';
@@ -376,12 +375,11 @@ class DashboardServer:
                         if not DashboardServer._instance._is_token_valid(bootstrap_token):
                             self.send_error(401, "Unauthorized")
                             return
-                        self.send_response(200)
-                        self.send_header("Content-Type", "text/html")
+                        self.send_response(302)
+                        self.send_header("Location", "/")
                         self.send_header("Set-Cookie", f"vaultknox_token={bootstrap_token}; HttpOnly; Path=/; SameSite=Strict")
                         self._set_common_headers()
                         self.end_headers()
-                        self.wfile.write(_DASHBOARD_HTML.encode())
                         return
 
                 token = self._read_auth_token()
