@@ -22,6 +22,7 @@ Outbound scanning (v0.4.2)
 
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Any
 
@@ -113,11 +114,12 @@ def handle(event_type: str, context: dict[str, Any]) -> None:
 
     for detector in DETECTORS:
         for match in detector.pattern.finditer(text):
+            secret_value = match.group(0)
             findings.append(
                 {
                     "detector": detector.name,
                     "severity": detector.severity,
-                    "matched_text": match.group(0),
+                    "fingerprint": hashlib.sha256(secret_value.encode("utf-8"), usedforsecurity=True).hexdigest(),
                     "span": match.span(),
                 }
             )

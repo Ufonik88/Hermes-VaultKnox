@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from vaultknox.audit import write_audit_event
@@ -172,10 +173,11 @@ def vault_tool(
             findings = []
             for detector in DETECTORS:
                 for match in detector.pattern.finditer(text):
+                    secret_value = match.group(0)
                     findings.append({
                         "detector": detector.name,
                         "severity": detector.severity,
-                        "matched_text": match.group(0),
+                        "fingerprint": hashlib.sha256(secret_value.encode("utf-8"), usedforsecurity=True).hexdigest(),
                         "span": match.span(),
                     })
             return {"findings": findings, "count": len(findings), "scanned_chars": len(text)}

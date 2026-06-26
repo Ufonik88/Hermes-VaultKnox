@@ -109,7 +109,8 @@ class TestSecretGuardHook:
         assert len(findings) >= 1
         assert all("detector" in f for f in findings)
         assert all("severity" in f for f in findings)
-        assert all("matched_text" in f for f in findings)
+        assert all("fingerprint" in f for f in findings)
+        assert all("matched_text" not in f for f in findings)
         assert all("span" in f for f in findings)
 
 

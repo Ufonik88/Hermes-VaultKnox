@@ -952,6 +952,11 @@ def sanitize_history(obj: dict, apply: bool, paths: str | None) -> None:
     total_files_modified = 0
     files_modified = []
 
+
+    def _quote_identifier(identifier: str) -> str:
+        """Quote a SQLite identifier from schema introspection."""
+        return '"' + identifier.replace('"', '""') + '"'
+
     def _redact_text(text: str) -> tuple[str, int]:
         """Redact all detector matches in text. Returns (redacted_text, count)."""
         matches = []
@@ -1014,10 +1019,12 @@ def sanitize_history(obj: dict, apply: bool, paths: str | None) -> None:
                 db_findings = 0
                 for table in tables:
                     try:
-                        cursor.execute(f"PRAGMA table_info({table})")
+                        quoted_table = _quote_identifier(table)
+                        cursor.execute(f"PRAGMA table_info({quoted_table})")  # nosec
                         text_cols = [row[1] for row in cursor.fetchall() if row[2].upper() in ("TEXT", "BLOB")]
                         for col in text_cols:
-                            cursor.execute(f"SELECT rowid, {col} FROM {table} WHERE {col} IS NOT NULL")
+                            quoted_col = _quote_identifier(col)
+                            cursor.execute(f"SELECT rowid, {quoted_col} FROM {quoted_table} WHERE {quoted_col} IS NOT NULL")  # nosec
                             for rowid, value in cursor.fetchall():
                                 if not isinstance(value, str) or not value:
                                     continue
@@ -1026,7 +1033,7 @@ def sanitize_history(obj: dict, apply: bool, paths: str | None) -> None:
                                     db_findings += count
                                     if apply:
                                         cursor.execute(
-                                            f"UPDATE {table} SET {col} = ? WHERE rowid = ?",
+                                            f"UPDATE {quoted_table} SET {quoted_col} = ? WHERE rowid = ?",  # nosec
                                             (redacted, rowid),
                                         )
                     except Exception as exc:  # noqa: BLE001

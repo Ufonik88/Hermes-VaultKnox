@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import math
 import os
+import re
 import stat
 from dataclasses import dataclass
 from pathlib import Path
@@ -245,6 +246,9 @@ class SecretScanner:
             # maximum length — we've already truncated it to what we store anyway.
             if len(line) > self.max_line_length:
                 return
+
+            pending: list[tuple[Detector, re.Match[str], str]] = []
+            spans: list[tuple[int, int]] = []
             for detector in self.detectors:
                 match = detector.pattern.search(line)
                 if not match:
@@ -258,6 +262,14 @@ class SecretScanner:
                         continue
                     if candidate and _shannon_entropy(candidate) < self.entropy_threshold:
                         continue
+                pending.append((detector, match, secret_value))
+                spans.append(match.span())
+
+            if not pending:
+                return
+
+            redacted_line = _redact_spans(line, spans)[: self.max_line_length]
+            for detector, _match, secret_value in pending:
                 fingerprint = _fingerprint(secret_value)
 
                 # Record fingerprint for duplicate detection
@@ -270,7 +282,7 @@ class SecretScanner:
                     Finding(
                         file_path=str(path),
                         line_number=line_number,
-                        line_content=line[: self.max_line_length],
+                        line_content=redacted_line,
                         detector_name=detector.name,
                         severity=detector.severity,
                         secret_fingerprint=fingerprint,
@@ -319,6 +331,22 @@ def _walk_with_skip(root: Path) -> Iterator[Path]:
         yield entry
         if entry.is_dir():
             yield from _walk_with_skip(entry)
+
+
+def _redact_spans(text: str, spans: list[tuple[int, int]]) -> str:
+    """Return text with all spans merged and redacted."""
+    if not spans:
+        return text
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(spans, key=lambda span: span[0]):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    redacted = text
+    for start, end in reversed(merged):
+        redacted = redacted[:start] + "[REDACTED-SENSITIVE-VALUE]" + redacted[end:]
+    return redacted
 
 
 def _fingerprint(secret: str) -> str:

@@ -309,8 +309,9 @@ class AutonomousSecretsStore:
 
         # Check if it's v1 (Fernet) or v2 (AES-256-GCM)
         try:
-            # Try to parse as JSON (v2 format)
-            header = json.loads(raw[:100].decode("utf-8", errors="ignore"))
+            # Try to parse as JSON (v2 format). Do not truncate: compact v2
+            # payloads can exceed 100 bytes before the closing brace.
+            header = json.loads(raw.decode("utf-8"))
             if isinstance(header, dict) and "v" in header:
                 version = header["v"]
                 if version == 2:
@@ -386,7 +387,7 @@ class AutonomousSecretsStore:
         encrypted = self._encrypt_v2(key, secrets)
         write_private_file(self._secrets_path, encrypted)
 
-    def _encrypt_v2(self, key: bytes, secrets: dict[str, str]) -> bytes:
+    def _encrypt_v2(self, key: bytes, secret_map: dict[str, str]) -> bytes:
         """Encrypt secrets using v2 format (AES-256-GCM with HKDF)."""
         # Generate random salt for HKDF
         salt = secrets.token_bytes(16)
@@ -396,7 +397,7 @@ class AutonomousSecretsStore:
         hkdf = HKDF(algorithm=hashes.SHA256(), length=KEY_SIZE, salt=salt, info=b"vaultknox-autonomous-v2")
         enc_key = hkdf.derive(key)
 
-        plaintext = json.dumps(secrets, separators=(",", ":")).encode("utf-8")
+        plaintext = json.dumps(secret_map, separators=(",", ":")).encode("utf-8")
         aesgcm = AESGCM(enc_key)
         ciphertext = aesgcm.encrypt(nonce, plaintext, None)
 
