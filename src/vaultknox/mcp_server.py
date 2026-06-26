@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,18 @@ from vaultknox import __version__
 from vaultknox.hermes_tool import vault_tool
 
 logger = logging.getLogger("vaultknox.mcp")
+
+
+def _mcp_vault_paths():
+    """Resolve the vault paths MCP tool calls should use.
+
+    The Click CLI accepts ``--runtime-dir`` before ``mcp``, but the MCP
+    server runs independently after startup. Allow harness configs and local
+    pilots to pass the same isolated runtime through the environment.
+    """
+    from vaultknox.config import expand_runtime_path
+
+    return expand_runtime_path(os.environ.get("VAULTKNOX_RUNTIME_DIR"))
 
 # Tool schemas matching VaultKnox capabilities
 _TOOL_SCHEMAS = {
@@ -109,7 +122,6 @@ def _create_server() -> Server:
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[TextContent]:
         """Handle tool calls."""
-        from vaultknox.config import expand_runtime_path
         from vaultknox.health import VaultHealthChecker
         from vaultknox.policy import PolicyEngine
         from vaultknox.scanner import SecretScanner
@@ -118,7 +130,7 @@ def _create_server() -> Server:
         from vaultknox.vault import VaultKnox
 
         try:
-            vault_paths = expand_runtime_path()
+            vault_paths = _mcp_vault_paths()
             VaultKnox(vault_paths)
 
             agent_id = (arguments or {}).get("agent_id")
