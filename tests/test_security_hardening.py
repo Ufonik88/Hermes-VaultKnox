@@ -179,7 +179,7 @@ def test_oauth_accepts_https_token_url_and_reaches_urlopen(monkeypatch):
     assert calls == [("https://example.test/token", 30)]
 
 
-def test_sanitize_history_quotes_hostile_sqlite_identifiers(tmp_path):
+def test_sanitize_history_redacts_messages_table_and_ignores_unrelated_tables(tmp_path):
     import sqlite3
 
     from click.testing import CliRunner
@@ -187,10 +187,13 @@ def test_sanitize_history_quotes_hostile_sqlite_identifiers(tmp_path):
     from vaultknox.cli import main
 
     raw_secret = "sk-" + "E" * 32
+    ignored_secret = "sk-" + "H" * 32
     db_path = tmp_path / "state.db"
     conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY, content TEXT, tool_calls TEXT, reasoning TEXT)")
+    conn.execute("INSERT INTO messages (content, tool_calls, reasoning) VALUES (?, ?, ?)", (f"token={raw_secret}", None, None))
     conn.execute('CREATE TABLE "odd table" ("odd col" TEXT)')
-    conn.execute('INSERT INTO "odd table" ("odd col") VALUES (?)', (f"token={raw_secret}",))
+    conn.execute('INSERT INTO "odd table" ("odd col") VALUES (?)', (f"token={ignored_secret}",))
     conn.commit()
     conn.close()
 
@@ -198,7 +201,9 @@ def test_sanitize_history_quotes_hostile_sqlite_identifiers(tmp_path):
 
     assert result.exit_code == 0, result.output
     conn = sqlite3.connect(db_path)
-    value = conn.execute('SELECT "odd col" FROM "odd table"').fetchone()[0]
+    value = conn.execute("SELECT content FROM messages").fetchone()[0]
+    ignored_value = conn.execute('SELECT "odd col" FROM "odd table"').fetchone()[0]
     conn.close()
     assert raw_secret not in value
     assert "[REDACTED-SENSITIVE-VALUE]" in value
+    assert ignored_value == f"token={ignored_secret}"

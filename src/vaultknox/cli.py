@@ -953,9 +953,38 @@ def sanitize_history(obj: dict, apply: bool, paths: str | None) -> None:
     files_modified = []
 
 
-    def _quote_identifier(identifier: str) -> str:
-        """Quote a SQLite identifier from schema introspection."""
-        return '"' + identifier.replace('"', '""') + '"'
+    hermes_message_text_fields = [
+        (
+            "content",
+            "SELECT rowid, content FROM messages WHERE content IS NOT NULL",
+            "UPDATE messages SET content = ? WHERE rowid = ?",
+        ),
+        (
+            "tool_calls",
+            "SELECT rowid, tool_calls FROM messages WHERE tool_calls IS NOT NULL",
+            "UPDATE messages SET tool_calls = ? WHERE rowid = ?",
+        ),
+        (
+            "reasoning",
+            "SELECT rowid, reasoning FROM messages WHERE reasoning IS NOT NULL",
+            "UPDATE messages SET reasoning = ? WHERE rowid = ?",
+        ),
+        (
+            "reasoning_details",
+            "SELECT rowid, reasoning_details FROM messages WHERE reasoning_details IS NOT NULL",
+            "UPDATE messages SET reasoning_details = ? WHERE rowid = ?",
+        ),
+        (
+            "reasoning_content",
+            "SELECT rowid, reasoning_content FROM messages WHERE reasoning_content IS NOT NULL",
+            "UPDATE messages SET reasoning_content = ? WHERE rowid = ?",
+        ),
+        (
+            "codex_message_items",
+            "SELECT rowid, codex_message_items FROM messages WHERE codex_message_items IS NOT NULL",
+            "UPDATE messages SET codex_message_items = ? WHERE rowid = ?",
+        ),
+    ]
 
     def _redact_text(text: str) -> tuple[str, int]:
         """Redact all detector matches in text. Returns (redacted_text, count)."""
@@ -1012,35 +1041,28 @@ def sanitize_history(obj: dict, apply: bool, paths: str | None) -> None:
             total_files_scanned += 1
             try:
                 conn = sqlite3.connect(str(target))
-                # Find all TEXT columns in all tables
                 cursor = conn.cursor()
-                cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-                tables = [row[0] for row in cursor.fetchall()]
+                cursor.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'messages'")
+                if cursor.fetchone() is None:
+                    click.echo("  ⚠️  state.db skipped: messages table not found")
+                    conn.close()
+                    continue
+
+                cursor.execute("PRAGMA table_info(messages)")
+                existing_columns = {row[1] for row in cursor.fetchall()}
                 db_findings = 0
-                for table in tables:
-                    try:
-                        quoted_table = _quote_identifier(table)
-                        # SQLite does not support parameter binding for identifiers.
-                        # table is schema-derived and double-quoted by _quote_identifier.
-                        cursor.execute(f"PRAGMA table_info({quoted_table})")  # nosec  # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query
-                        text_cols = [row[1] for row in cursor.fetchall() if row[2].upper() in ("TEXT", "BLOB")]
-                        for col in text_cols:
-                            quoted_col = _quote_identifier(col)
-                            # col is schema-derived and both identifiers are double-quoted.
-                            cursor.execute(f"SELECT rowid, {quoted_col} FROM {quoted_table} WHERE {quoted_col} IS NOT NULL")  # nosec  # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query
-                            for rowid, value in cursor.fetchall():
-                                if not isinstance(value, str) or not value:
-                                    continue
-                                redacted, count = _redact_text(value)
-                                if count:
-                                    db_findings += count
-                                    if apply:
-                                        cursor.execute(
-                                            f"UPDATE {quoted_table} SET {quoted_col} = ? WHERE rowid = ?",  # nosec  # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query
-                                            (redacted, rowid),
-                                        )
-                    except Exception as exc:  # noqa: BLE001
-                        click.echo(f"  ⚠️  Table '{table}' skipped: {exc}")
+                for col, select_sql, update_sql in hermes_message_text_fields:
+                    if col not in existing_columns:
+                        continue
+                    cursor.execute(select_sql)
+                    for rowid, value in cursor.fetchall():
+                        if not isinstance(value, str) or not value:
+                            continue
+                        redacted, count = _redact_text(value)
+                        if count:
+                            db_findings += count
+                            if apply:
+                                cursor.execute(update_sql, (redacted, rowid))
                 conn.commit()
                 conn.close()
                 if db_findings:
