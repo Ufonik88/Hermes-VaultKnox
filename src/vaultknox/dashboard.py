@@ -133,6 +133,9 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
         function esc(value) {
             return String(value ?? '').replace(/[&<>\"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[ch]));
         }
+        function cssClass(value) {
+            return String(value ?? '').toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+        }
         
         async function api(endpoint) {
             const resp = await fetch('/api/' + endpoint);
@@ -170,8 +173,8 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
             
             const tbody = document.querySelector('#credentialsTable tbody');
             const rows = secrets.map(s => {
-                const type = esc(s.type);
-                const badge = '<span class="badge badge-' + type + '">' + type + '</span>';
+                const typeText = esc(s.type);
+                const badge = '<span class="badge badge-' + cssClass(s.type) + '">' + typeText + '</span>';
                 return '<tr><td>' + esc(s.id) + '</td><td>' + badge + '</td><td>' + esc(s.label) + '</td><td>' + esc(s.created_at || '') + '</td><td>' + esc(s.expires_at || '-') + '</td></tr>';
             }).join('');
             tbody.innerHTML = rows || '<tr><td colspan="5" style="text-align:center;color:#8b949e">No secrets stored</td></tr>';
