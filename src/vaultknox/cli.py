@@ -1020,11 +1020,14 @@ def sanitize_history(obj: dict, apply: bool, paths: str | None) -> None:
                 for table in tables:
                     try:
                         quoted_table = _quote_identifier(table)
-                        cursor.execute(f"PRAGMA table_info({quoted_table})")  # nosec
+                        # SQLite does not support parameter binding for identifiers.
+                        # table is schema-derived and double-quoted by _quote_identifier.
+                        cursor.execute(f"PRAGMA table_info({quoted_table})")  # nosec  # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query
                         text_cols = [row[1] for row in cursor.fetchall() if row[2].upper() in ("TEXT", "BLOB")]
                         for col in text_cols:
                             quoted_col = _quote_identifier(col)
-                            cursor.execute(f"SELECT rowid, {quoted_col} FROM {quoted_table} WHERE {quoted_col} IS NOT NULL")  # nosec
+                            # col is schema-derived and both identifiers are double-quoted.
+                            cursor.execute(f"SELECT rowid, {quoted_col} FROM {quoted_table} WHERE {quoted_col} IS NOT NULL")  # nosec  # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query
                             for rowid, value in cursor.fetchall():
                                 if not isinstance(value, str) or not value:
                                     continue
@@ -1033,7 +1036,7 @@ def sanitize_history(obj: dict, apply: bool, paths: str | None) -> None:
                                     db_findings += count
                                     if apply:
                                         cursor.execute(
-                                            f"UPDATE {quoted_table} SET {quoted_col} = ? WHERE rowid = ?",  # nosec
+                                            f"UPDATE {quoted_table} SET {quoted_col} = ? WHERE rowid = ?",  # nosec  # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query
                                             (redacted, rowid),
                                         )
                     except Exception as exc:  # noqa: BLE001
