@@ -6,7 +6,7 @@ VaultKnox is an encrypted secrets vault designed for Hermes Agent workflows. It 
 
 ## Status
 
-VaultKnox v0.7.0 is in **alpha** (Development Status :: 3 - Alpha).
+VaultKnox v0.7.1 is in **alpha** (Development Status :: 3 - Alpha).
 
 - Intended use: local development and operator-managed Hermes environments.
 - Review the threat model before deploying in high-risk environments.
@@ -92,6 +92,7 @@ Compromise of any sub-key does not expose the master key or any other sub-key's 
 - Backup export and import with integrity signing
 - Audit logging with owner-only permissions and rotation
 - Hermes integration wrapper with write actions disabled by default
+- **v0.7.1** — Agent-facing secret handling hardening: scanner/hermes_tool/secret_guard findings return SHA-256 fingerprints instead of raw matched text; dashboard uses HTML escaping and HttpOnly/SameSite-Strict cookies for auth; OAuth token URLs enforced HTTPS-only; MCP server supports `VAULTKNOX_RUNTIME_DIR` isolation; `sanitize-history` targets only known Hermes message columns instead of arbitrary SQLite tables.
 - **v0.7.0** — Session-derived key flow completed for agent paths: operator unlock establishes session key, and agent actions no longer require `master_password`
 - **v0.7.0** — Policy Engine v2 is now enforced in `vault_tool` and MCP access paths with deny-by-default, service/action checks, capability gates, and token TTL clamping
 - **v0.7.0** — OAuth secrets now auto-refresh on read when near expiry, with safe failure fallback (`refresh_failed`) and no token logging
@@ -480,7 +481,7 @@ vaultknox sanitize-history --apply      # Actually redact
 
 Scans and redacts:
 - `~/.hermes/sessions/*.jsonl`
-- `~/.hermes/state.db` (all TEXT/BLOB columns)
+- `~/.hermes/state.db` (known Hermes message columns: `content`, `tool_calls`, `reasoning`, `reasoning_details`, `reasoning_content`, `codex_message_items`)
 - `~/.hermes/.hermes_history`
 
 ### Agent Autonomy Package (`agent_guide/`)
