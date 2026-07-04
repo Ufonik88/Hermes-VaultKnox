@@ -1107,6 +1107,229 @@ def sanitize_history(obj: dict, apply: bool, paths: str | None) -> None:
         click.echo(f"\n  Run with --apply to actually redact {total_findings} occurrence(s).")
 
 
+# ---------------------------------------------------------------------------
+# ``onboard`` command group — autonomous repository onboarding
+# ---------------------------------------------------------------------------
+
+
+@main.group(cls=_VaultGroup)
+def onboard() -> None:
+    """Autonomously onboard a repository for Hermes Agent.
+
+    Analyze, document, and prepare any repository for AI-driven development.
+    Supports Python, Node.js, Rust, Go, Ruby, PHP, and more.
+    """
+
+
+def _onboard_config(repo: str, dry_run: bool, skip_install: bool = False, skip_docs: bool = False) -> OnboardConfig:
+    from vaultknox.onboard.config import OnboardConfig, resolve_repo_path
+    resolved = resolve_repo_path(repo)
+    return OnboardConfig(
+        repo_path=resolved, dry_run=dry_run,
+        install_dependencies=not skip_install and not dry_run,
+        run_build_checks=not skip_install and not dry_run,
+        generate_agents_md=not skip_docs, generate_readme_md=not skip_docs,
+        generate_setup_md=not skip_docs, generate_architecture=not skip_docs,
+    )
+
+
+def _print_analysis(report: AnalysisReport) -> None:
+    from vaultknox.onboard.analyzer.engine import AnalysisReport
+    click.echo()
+    click.secho(f"  Repository: {report.repo_path}", bold=True)
+    click.secho(f"  Primary Language: {report.primary_language}", fg="green")
+    click.echo(f"  Languages Detected: {report.language_count}")
+    if report.frameworks:
+        click.echo(f"  Frameworks: {', '.join(list(report.frameworks.keys())[:8])}")
+    if report.dependencies:
+        dep_types = [k.replace("_", " ").title() for k in report.dependencies if report.dependencies[k].get("found")]
+        if dep_types:
+            click.echo(f"  Dependency manifests: {', '.join(dep_types)}")
+    if report.entry_points:
+        click.echo(f"  Entry points: {', '.join(report.entry_points[:3])}")
+    if report.test_dirs:
+        click.echo(f"  Test dirs: {', '.join(report.test_dirs)}")
+    stats = report.structure.get("stats", {})
+    click.echo(f"  Total files: {stats.get('total_files', '?')}")
+    if report.issues:
+        click.echo()
+        click.secho("  Issues:", fg="yellow")
+        for issue in report.issues:
+            click.echo(f"    {issue}")
+    if report.warnings:
+        click.secho("  Warnings:", fg="yellow")
+        for warning in report.warnings:
+            click.echo(f"    {warning}")
+
+
+@onboard.command("analyze")
+@click.argument("repo", type=click.Path(exists=True))
+@click.option("--verbose", "-v", is_flag=True, help="Show detailed output")
+@click.option("--dry-run", is_flag=True, help="Analyze without caching results")
+def onboard_analyze(repo: str, verbose: bool, dry_run: bool) -> None:
+    """Analyze a repository: detect languages, frameworks, dependencies, and structure.
+    
+    REPO is a local path to the repository.
+    """
+    from vaultknox.onboard.analyzer.engine import RepoAnalyzer
+    config = _onboard_config(repo, dry_run=dry_run)
+    analyzer = RepoAnalyzer(config)
+    click.echo(f"Analyzing {config.repo_name}...")
+    report = analyzer.analyze()
+    if verbose:
+        click.echo(report.to_json())
+    else:
+        _print_analysis(report)
+
+
+@onboard.command("document")
+@click.argument("repo", type=click.Path(exists=True))
+@click.option("--dry-run", is_flag=True, help="Preview without writing files")
+def onboard_document(repo: str, dry_run: bool) -> None:
+    """Generate documentation: AGENTS.md, README.md, SETUP.md, ARCHITECTURE.md.
+    
+    Existing user-authored files are not overwritten.
+    """
+    from vaultknox.onboard.analyzer.engine import RepoAnalyzer
+    from vaultknox.onboard.documenter.engine import DocGenerator
+    config = _onboard_config(repo, dry_run=dry_run, skip_install=True)
+    analyzer = RepoAnalyzer(config)
+    report = analyzer.analyze()
+    click.echo(f"Generating documentation for {config.repo_name}...")
+    doc_gen = DocGenerator(config)
+    doc_report = doc_gen.generate_all(report)
+    click.echo()
+    for r in doc_report.results:
+        if r.generated:
+            click.echo(f"  {r.filename} ({'overwritten' if r.overwritten else 'created'})")
+        elif r.skipped:
+            click.echo(f"  {r.filename} (skipped — {r.skip_reason})")
+        elif r.error:
+            click.echo(f"  {r.filename} (error: {r.error})")
+    click.echo()
+    click.echo(f"Generated: {doc_report.generated_count}, Skipped: {doc_report.skipped_count}")
+
+
+@onboard.command("setup")
+@click.argument("repo", type=click.Path(exists=True))
+@click.option("--dry-run", is_flag=True, help="Preview without installing")
+@click.option("--no-install", "skip_install", is_flag=True, help="Skip dependency installation")
+def onboard_setup(repo: str, dry_run: bool, skip_install: bool) -> None:
+    """Set up the environment: install deps, run build checks, detect env gaps."""
+    from vaultknox.onboard.analyzer.engine import RepoAnalyzer
+    from vaultknox.onboard.environment.engine import EnvSetup
+    config = _onboard_config(repo, dry_run=dry_run, skip_install=skip_install, skip_docs=True)
+    analyzer = RepoAnalyzer(config)
+    report = analyzer.analyze()
+    click.echo(f"Setting up environment for {config.repo_name}...")
+    env = EnvSetup(config)
+    env_report = env.setup(report)
+
+    for r in env_report.install_results:
+        s = chr(0x2705) if r.success else chr(0x274C)
+        click.echo(f"  {s} {r.command} ({r.duration_seconds:.1f}s)")
+    for r in env_report.build_results:
+        s = chr(0x2705) if r.success else chr(0x274C)
+        click.echo(f"  {s} {r.command}")
+    if env_report.missing_env_vars:
+        click.secho("  Missing environment variables:", fg="yellow")
+        for v in env_report.missing_env_vars[:10]:
+            click.echo(f"    {v}")
+    if env_report.ready:
+        click.secho("  Environment is ready!", fg="green")
+    else:
+        click.secho("  Environment not fully ready. Review issues above.", fg="yellow")
+
+
+@onboard.command("full")
+@click.argument("repo", type=click.Path(exists=True))
+@click.option("--dry-run", is_flag=True, help="Preview entire pipeline without changes")
+@click.option("--verbose", "-v", is_flag=True, help="Show detailed analysis output")
+def onboard_full(repo: str, dry_run: bool, verbose: bool) -> None:
+    """Complete onboarding pipeline: analyze, document, setup.
+    
+    This is the recommended command for first contact with a new repository.
+    """
+    from vaultknox.onboard.analyzer.engine import RepoAnalyzer
+    from vaultknox.onboard.documenter.engine import DocGenerator
+    from vaultknox.onboard.environment.engine import EnvSetup
+    config = _onboard_config(repo, dry_run=dry_run)
+
+    click.secho("Phase 1: Analysis", bold=True)
+    analyzer = RepoAnalyzer(config)
+    report = analyzer.analyze()
+    _print_analysis(report)
+
+    click.echo()
+    click.secho("Phase 2: Documentation", bold=True)
+    doc_gen = DocGenerator(config)
+    doc_report = doc_gen.generate_all(report)
+    for r in doc_report.results:
+        if r.generated: click.echo(f"  {r.filename} ({'overwritten' if r.overwritten else 'created'})")
+        elif r.skipped: click.echo(f"  {r.filename} (skipped)")
+
+    click.echo()
+    click.secho("Phase 3: Environment Setup", bold=True)
+    env = EnvSetup(config)
+    env_report = env.setup(report)
+    for r in env_report.install_results:
+        s = chr(0x2705) if r.success else chr(0x274C)
+        click.echo(f"  {s} {r.command} ({r.duration_seconds:.1f}s)")
+    for r in env_report.build_results:
+        s = chr(0x2705) if r.success else chr(0x274C)
+        click.echo(f"  {s} {r.command}")
+    if env_report.missing_env_vars:
+        click.secho("  Missing environment variables:", fg="yellow")
+        for v in env_report.missing_env_vars[:5]:
+            click.echo(f"    export {v}=<value>")
+
+    click.echo()
+    click.secho("Onboarding Complete", bold=True)
+    click.echo(f"  Languages: {report.language_count}")
+    click.echo(f"  Docs generated: {doc_report.generated_count}")
+    click.echo(f"  Environment ready: {'Yes' if env_report.ready else 'No'}")
+
+
+@onboard.command("install-plugin")
+def onboard_install_plugin() -> None:
+    """Deploy the VaultKnox Onboard gateway plugin to ~/.hermes/plugins/.
+
+    Enables Hermes to automatically detect onboarding requests.
+    After deploying, add to Hermes config.yaml::
+    
+        plugins:
+          enabled:
+            - vaultknox-onboard
+    """
+    plugin_dir = Path.home() / ".hermes" / "plugins" / "vaultknox-onboard"
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+
+    src_module = Path(__file__).parent / "onboard"
+    for fname in ("plugin.py", "plugin.yaml"):
+        src = src_module / fname
+        dst = plugin_dir / ("__init__.py" if fname == "plugin.py" else fname)
+        content = src.read_text(encoding="utf-8")
+        dst.write_text(content, encoding="utf-8")
+
+    click.echo(f"  Installed vaultknox-onboard plugin to {plugin_dir}")
+    click.echo("  Add to Hermes config.yaml to activate.")
+    click.echo()
+    click.echo("  To activate, add to Hermes config.yaml:")
+    click.echo("    plugins:")
+    click.echo("      enabled:")
+    click.echo("        - vaultknox-onboard")
+
+
+@onboard.command("generate-skill")
+@click.option("--output", "-o", "output_path", type=click.Path(path_type=Path), default=None)
+def onboard_generate_skill(output_path: Path | None) -> None:
+    """Generate SKILL.md contract for VaultKnox Onboard."""
+    from vaultknox.skills import generate_onboard_skill
+    result = generate_onboard_skill(output_path)
+    click.echo(f"  SKILL.md generated at: {result['path']}")
+    click.echo(f"  Content hash: {result['content_hash']}")
+
+
 @main.command("install-hooks")
 def install_hooks() -> None:
     """Install the secret-guard hook and plugin into ~/.hermes/.

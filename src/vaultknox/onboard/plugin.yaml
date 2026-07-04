@@ -1,0 +1,12 @@
+"""VaultKnox Onboard plugin manifest."""
+name: vaultknox-onboard
+description: |
+  Autonomous repository onboarding for VaultKnox / Hermes Agent.
+  Detects languages, frameworks, and deps; generates AGENTS.md,
+  README.md, SETUP.md; installs dependencies and runs build checks.
+version: 0.7.1
+author: VaultKnox
+kind: standalone
+provides_hooks:
+  - pre_gateway_dispatch
+  - pre_llm_call

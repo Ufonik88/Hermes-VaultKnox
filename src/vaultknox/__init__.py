@@ -4,6 +4,10 @@ from vaultknox.exceptions import VaultError
 from vaultknox.health import VaultHealthChecker
 from vaultknox.hermes_tool import vault_tool
 from vaultknox.hooks import handle
+from vaultknox.onboard.analyzer.engine import AnalysisReport, RepoAnalyzer
+from vaultknox.onboard.config import OnboardConfig
+from vaultknox.onboard.documenter.engine import DocGenerator, DocReport
+from vaultknox.onboard.environment.engine import EnvReport, EnvSetup
 from vaultknox.rotation import rotate_master_key
 from vaultknox.scanner import SecretScanner
 from vaultknox.vault import VaultKnox
@@ -26,4 +30,11 @@ __all__ = [
     "get_system_prompt_snippet",
     "handle",
     "__version__",
+    "AnalysisReport",
+    "RepoAnalyzer",
+    "OnboardConfig",
+    "DocGenerator",
+    "DocReport",
+    "EnvReport",
+    "EnvSetup",
 ]
