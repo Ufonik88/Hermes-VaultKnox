@@ -38,3 +38,5 @@ hermes-vaultknox-plan.md
 Thumbs.db
 *.swp
 *.swo
+# Internal planning / personal tracking (moved to ~/.hermes/vaultknox-internal/)
+CLAUDE_IMPROVE_PLAN.md

@@ -65,6 +65,10 @@ vault-add-key openai "OpenAI API Key" sk-xxx
 
 Or guide them to use the vault tool with `allow_write=True`:
 
+> **Note:** Agent actions never accept `master_password`. After an operator
+> unlocks the vault, subsequent agent actions use a session-derived key
+> automatically (v0.7.0+). Only `allow_write=True` is required for write actions.
+
 ```python
 vaultknox(
     action="add",
@@ -73,7 +77,6 @@ vaultknox(
     label="OpenAI API Key",
     payload={"key": "sk-xxx", "service": "openai"},
     allow_write=True,
-    master_password="...",
 )
 ```
 

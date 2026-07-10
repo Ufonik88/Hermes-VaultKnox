@@ -501,6 +501,33 @@ encryption internals.
 you can inject into any agent's system prompt. Contains no file paths, no master
 password mechanics — just behavioural rules.
 
+### VaultKnox Onboard (v0.7.2)
+
+VaultKnox Onboard autonomously analyzes, documents, and prepares any repository
+for AI-driven development — the first new capability shipped after the v0.7.1
+security-hardening release. Supports Python, Node.js, Rust, Go, Ruby, PHP, and more.
+
+The `onboard` command group exposes:
+
+| Command | Purpose |
+|---|---|
+| `vaultknox onboard analyze` | Detect languages, frameworks, dependency manifests, entry points, test directories, and repo structure (read-only). |
+| `vaultknox onboard document` | Generate `AGENTS.md`, `README.md`, `SETUP.md`, and `ARCHITECTURE.md` from analysis; existing user-authored files are never overwritten. |
+| `vaultknox onboard setup` | Install dependencies, run build checks, and surface missing environment variables. |
+| `vaultknox onboard full` | The recommended first-contact pipeline: analyze → document → setup in one run. |
+| `vaultknox onboard install-plugin` | Deploy the `vaultknox-onboard` gateway plugin to `~/.hermes/plugins/` for automatic onboarding-request detection. |
+| `vaultknox onboard generate-skill` | Emit a `SKILL.md` contract describing VaultKnox Onboard for sub-agents. |
+
+Example — analyze a repository without making changes:
+
+```bash
+vaultknox onboard analyze --dry-run /path/to/repo
+```
+
+`--dry-run` performs analysis without caching results. Existing documentation
+files are always preserved; the documenter skips any file that already exists
+and was authored by a human.
+
 ### Other v0.4.0 Operations
 
 | Command | Purpose |
@@ -514,7 +541,7 @@ password mechanics — just behavioural rules.
 
 ## Changelog / What's New
 
-See [CHANGELOG.md](CHANGELOG.md) for the complete version history, including the v0.7.0 hardening release.
+See [CHANGELOG.md](CHANGELOG.md) for the complete version history, including the v0.7.2 Onboard release.
 
 ## Release Guidance
 

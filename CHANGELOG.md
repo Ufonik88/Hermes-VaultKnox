@@ -5,6 +5,19 @@ All notable changes to VaultKnox are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] — 2026-07-10
+
+### Added
+
+- **VaultKnox Onboard — autonomous repository onboarding** — the first new capability shipped after the v0.7.1 security-hardening release (PR #8). A new `onboard` command group lets Hermes Agent analyze, document, and prepare any repository for AI-driven development (Python, Node.js, Rust, Go, Ruby, PHP, and more).
+  - `vaultknox onboard analyze` — detect languages, frameworks, dependency manifests, entry points, test directories, and repo structure (`src/vaultknox/onboard/analyzer/`).
+  - `vaultknox onboard document` — generate `AGENTS.md`, `README.md`, `SETUP.md`, and `ARCHITECTURE.md` from analysis; existing user-authored files are never overwritten (`src/vaultknox/onboard/documenter/`).
+  - `vaultknox onboard setup` — install dependencies, run build checks, and surface missing environment variables (`src/vaultknox/onboard/environment/`).
+  - `vaultknox onboard full` — the recommended first-contact pipeline: analyze → document → setup in one run.
+  - `vaultknox onboard install-plugin` — deploy the `vaultknox-onboard` gateway plugin to `~/.hermes/plugins/` for automatic onboarding-request detection.
+  - `vaultknox onboard generate-skill` — emit a `SKILL.md` contract describing VaultKnox Onboard for sub-agents.
+- **Milestone note** — Onboard is the first feature to land on `main` since the v0.7.1 hardening release, reopening the post-hardening feature track.
+
 ## [0.7.0] — 2026-06-23
 
 ### Added
