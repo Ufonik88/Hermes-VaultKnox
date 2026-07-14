@@ -528,6 +528,15 @@ vaultknox onboard analyze --dry-run /path/to/repo
 files are always preserved; the documenter skips any file that already exists
 and was authored by a human.
 
+**Sandboxing note.** `vaultknox onboard setup` and `onboard full` run dependency
+installers and build commands through `SandboxExecutor`, which now uses
+`subprocess.Popen(..., shell=False, argv=shlex.split(command))` instead of
+`shell=True`. Shell metacharacters are tokenized as literals, sensitive paths
+are rejected, and secret-bearing environment variables are stripped before
+execution. The allowlist controls which binaries may run; unknown commands are
+rejected.
+
+
 ### Other v0.4.0 Operations
 
 | Command | Purpose |

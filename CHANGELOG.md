@@ -5,6 +5,24 @@ All notable changes to VaultKnox are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.3] — 2026-07-14
+
+### Security
+
+- **VaultKnox Onboard sandbox — replaced `shell=True` with argv-based execution.** `SandboxExecutor.run()` now passes `shell=False` to `subprocess.Popen`, with commands tokenized through `shlex.split`. Shell metacharacters such as `;`, `&&`, `$()`, backticks, pipes, and newlines are no longer interpreted, closing the command-chaining bypass that existed under the previous implementation.
+- **Sensitive-path argument blocklist added.** Even when the command binary is allowlisted, arguments that reference `/.ssh/`, `/.gnupg/`, `/etc/shadow`, `/etc/passwd`, `/proc/`, or `/sys/` are rejected before execution.
+- **Secret environment variables are stripped from child processes.** Common credential-bearing variables (`GITHUB_TOKEN`, `AWS_SECRET_ACCESS_KEY`, `VAULTKNOX_MASTER_PASSWORD`, etc.) are removed from `env` before `Popen`, preventing build/install scripts from inheriting the parent process's secrets via stdout/stderr.
+- **Process-group timeout kill.** Timeout now sends `SIGKILL` to the entire process group, not just the shell PID, preventing fork-bomb survivors after the timeout window.
+
+### Verification
+
+- `PYTHONPATH=src python -m pytest -q` → **passed**
+- New regression suite: `tests/onboard/test_onboard.py::TestSandboxSecurity` (8 tests covering metacharacters, sensitive paths, env stripping, and timeout kill behavior).
+
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
 ## [0.7.2] — 2026-07-10
 
 ### Added
