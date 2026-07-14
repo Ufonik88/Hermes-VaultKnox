@@ -196,3 +196,100 @@ class TestSkills:
         result = generate_onboard_skill(tmp_path)
         assert (tmp_path / "SKILL.md").exists()
         assert "path" in result and "content_hash" in result
+
+
+    class TestSandboxSecurity:
+        """Security regression tests for SandboxExecutor.
+
+        These tests enforce the contract that the sandbox cannot be bypassed by
+        shell metacharacters, environment leaks, or argument injection.
+        """
+
+        def test_shlex_split_preserves_quoted_args(self, sample_node_project: Path) -> None:
+            executor = SandboxExecutor(repo_path=sample_node_project, allowed_commands=["echo"])
+            result = executor.run('echo "hello world"')
+            assert result.success
+            assert "hello world" in result.stdout
+
+        def test_shell_metacharacters_cannot_chain_commands(
+            self, sample_node_project: Path
+        ) -> None:
+            executor = SandboxExecutor(
+                repo_path=sample_node_project, allowed_commands=["echo"]
+            )
+            payload = "echo hello; rm -rf /"
+            result = executor.run(payload)
+            assert not result.success
+            assert "hello" not in result.stdout
+
+        def test_backtick_substitution_cannot_chain_commands(
+            self, sample_node_project: Path
+        ) -> None:
+            executor = SandboxExecutor(
+                repo_path=sample_node_project, allowed_commands=["echo"]
+            )
+            payload = "echo hello `rm -rf /`"
+            result = executor.run(payload)
+            assert not result.success
+            assert "hello" not in result.stdout
+
+        def test_semicolon_does_not_chain_execution(self, sample_node_project: Path) -> None:
+            executor = SandboxExecutor(
+                repo_path=sample_node_project, allowed_commands=["echo"]
+            )
+            # With shell=False, shlex.split turns this into
+            # ['echo', 'BEFORE;', 'echo', 'AFTER'].
+            # The shell never interprets the semicolon, so echo prints it literally
+            # instead of running a second command.
+            result = executor.run("echo BEFORE; echo AFTER")
+            assert result.success
+            assert result.stdout.strip() == "BEFORE; echo AFTER"
+
+        def test_pipe_token_is_passed_as_literal_arg(self, sample_node_project: Path) -> None:
+            executor = SandboxExecutor(
+                repo_path=sample_node_project, allowed_commands=["echo"]
+            )
+            # With shell=False, `|` is not a pipe operator; it is argv[1].
+            result = executor.run("echo hello | cat")
+            assert result.success
+            assert result.stdout.strip() == "hello | cat"
+
+        def test_dollar_substitution_is_not_interpreted(self, sample_node_project: Path) -> None:
+            executor = SandboxExecutor(
+                repo_path=sample_node_project, allowed_commands=["echo"]
+            )
+            result = executor.run("echo '$(whoami)'")
+            assert result.success
+            assert "$(whoami)" in result.stdout
+
+        def test_env_secrets_are_stripped_from_child(self, sample_node_project: Path) -> None:
+            executor = SandboxExecutor(
+                repo_path=sample_node_project, allowed_commands=["env"]
+            )
+            env_with_secrets = {
+                "HOME": "/home/test",
+                "GITHUB_TOKEN": "ghp_abc123secret",
+                "DATABASE_URL": "postgres://localhost/db",
+            }
+            result = executor.run("env", env=env_with_secrets)
+            assert result.success
+            assert "ghp_abc123secret" not in result.stdout
+            assert "GITHUB_TOKEN" not in result.stdout
+            assert "DATABASE_URL" in result.stdout
+
+        def test_sensitive_path_argument_is_blocked(self, sample_node_project: Path) -> None:
+            executor = SandboxExecutor(
+                repo_path=sample_node_project, allowed_commands=["cat"]
+            )
+            result = executor.run("cat /etc/passwd")
+            assert result.blocked
+
+        def test_timeout_kills_process_group(self, sample_node_project: Path) -> None:
+            executor = SandboxExecutor(
+                repo_path=sample_node_project,
+                allowed_commands=["sleep"],
+                default_timeout=2,
+            )
+            result = executor.run("sleep 30", timeout=2)
+            assert not result.success
+            assert "Timed out" in result.stderr
