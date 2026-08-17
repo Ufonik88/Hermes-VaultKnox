@@ -110,15 +110,15 @@ def _infer_commands(report: AnalysisReport) -> dict[str, str]:
     if report.has_nodejs:
         pkg = report.dependencies.get("nodejs", {})
         scripts = pkg.get("scripts", {})
-        if "build" in scripts: commands["build"] = "npm run build"
-        if "test" in scripts: commands["test"] = "npm run test"
-        if "lint" in scripts: commands["lint"] = "npm run lint"
-        if "dev" in scripts: commands["dev"] = "npm run dev"
+        if "build" in scripts: commands["build"] = "npm run build"  # noqa: E701
+        if "test" in scripts: commands["test"] = "npm run test"  # noqa: E701
+        if "lint" in scripts: commands["lint"] = "npm run lint"  # noqa: E701
+        if "dev" in scripts: commands["dev"] = "npm run dev"  # noqa: E701
     if report.has_python:
         commands["test"] = "python -m pytest"
-        if report.frameworks.get("uv"): commands["install"] = "uv sync"
-        elif report.frameworks.get("Poetry"): commands["install"] = "poetry install"
-        else: commands["install"] = "pip install -e .[dev]"
+        if report.frameworks.get("uv"): commands["install"] = "uv sync"  # noqa: E701
+        elif report.frameworks.get("Poetry"): commands["install"] = "poetry install"  # noqa: E701
+        else: commands["install"] = "pip install -e .[dev]"  # noqa: E701
     if report.has_rust:
         commands["build"] = "cargo build"
         commands["test"] = "cargo test"

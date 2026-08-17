@@ -19,8 +19,8 @@ def run_build_checks(report: AnalysisReport, config: OnboardConfig) -> list[Sand
 
     if report.has_nodejs:
         scripts = report.dependencies.get("nodejs", {}).get("scripts", {})
-        if "build" in scripts: results.append(executor.run("npm run build"))
-        elif "typecheck" in scripts: results.append(executor.run("npm run typecheck"))
+        if "build" in scripts: results.append(executor.run("npm run build"))  # noqa: E701
+        elif "typecheck" in scripts: results.append(executor.run("npm run typecheck"))  # noqa: E701
         if any("TypeScript" in lang for lang in report.languages):
             results.append(executor.run("npx tsc --noEmit"))
 

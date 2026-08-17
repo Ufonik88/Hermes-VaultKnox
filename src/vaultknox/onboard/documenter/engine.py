@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from vaultknox.onboard.analyzer.engine import AnalysisReport
 from vaultknox.onboard.config import OnboardConfig
@@ -45,18 +44,18 @@ class DocGenerator:
         doc_report = DocReport(repo_path=str(self.config.repo_path))
 
         generators = []
-        if self.config.generate_agents_md: generators.append(("AGENTS.md", generate_agents_md))
-        if self.config.generate_readme_md: generators.append(("README.md", generate_readme_md))
-        if self.config.generate_setup_md: generators.append(("SETUP.md", generate_setup_md))
-        if self.config.generate_architecture: generators.append(("ARCHITECTURE.md", generate_arch_overview))
+        if self.config.generate_agents_md: generators.append(("AGENTS.md", generate_agents_md))  # noqa: E701
+        if self.config.generate_readme_md: generators.append(("README.md", generate_readme_md))  # noqa: E701
+        if self.config.generate_setup_md: generators.append(("SETUP.md", generate_setup_md))  # noqa: E701
+        if self.config.generate_architecture: generators.append(("ARCHITECTURE.md", generate_arch_overview))  # noqa: E701
 
         for filename, gen in generators:
             result = self._write_doc(filename, gen(report))
             doc_report.results.append(result)
-            if result.generated: doc_report.generated_count += 1
-            if result.overwritten: doc_report.overwritten_count += 1
-            if result.skipped: doc_report.skipped_count += 1
-            if result.error: doc_report.error_count += 1
+            if result.generated: doc_report.generated_count += 1  # noqa: E701
+            if result.overwritten: doc_report.overwritten_count += 1  # noqa: E701
+            if result.skipped: doc_report.skipped_count += 1  # noqa: E701
+            if result.error: doc_report.error_count += 1  # noqa: E701
 
         return doc_report
 

@@ -1121,7 +1121,7 @@ def onboard() -> None:
     """
 
 
-def _onboard_config(repo: str, dry_run: bool, skip_install: bool = False, skip_docs: bool = False) -> OnboardConfig:
+def _onboard_config(repo: str, dry_run: bool, skip_install: bool = False, skip_docs: bool = False) -> OnboardConfig:  # noqa: F821
     from vaultknox.onboard.config import OnboardConfig, resolve_repo_path
     resolved = resolve_repo_path(repo)
     return OnboardConfig(
@@ -1133,8 +1133,7 @@ def _onboard_config(repo: str, dry_run: bool, skip_install: bool = False, skip_d
     )
 
 
-def _print_analysis(report: AnalysisReport) -> None:
-    from vaultknox.onboard.analyzer.engine import AnalysisReport
+def _print_analysis(report: AnalysisReport) -> None:  # noqa: F821
     click.echo()
     click.secho(f"  Repository: {report.repo_path}", bold=True)
     click.secho(f"  Primary Language: {report.primary_language}", fg="green")
@@ -1265,8 +1264,8 @@ def onboard_full(repo: str, dry_run: bool, verbose: bool) -> None:
     doc_gen = DocGenerator(config)
     doc_report = doc_gen.generate_all(report)
     for r in doc_report.results:
-        if r.generated: click.echo(f"  {r.filename} ({'overwritten' if r.overwritten else 'created'})")
-        elif r.skipped: click.echo(f"  {r.filename} (skipped)")
+        if r.generated: click.echo(f"  {r.filename} ({'overwritten' if r.overwritten else 'created'})")  # noqa: E701
+        elif r.skipped: click.echo(f"  {r.filename} (skipped)")  # noqa: E701
 
     click.echo()
     click.secho("Phase 3: Environment Setup", bold=True)

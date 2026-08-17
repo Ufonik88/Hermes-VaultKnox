@@ -11,15 +11,14 @@ Security model:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import os
-from pathlib import Path
 import shlex
 import signal
 import subprocess
 import threading
 import time
-
+from dataclasses import dataclass, field
+from pathlib import Path
 
 BLOCKED_COMMAND_PATTERNS: list[str] = [
     "rm -rf /",

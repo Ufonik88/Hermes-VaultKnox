@@ -75,7 +75,7 @@ def generate_arch_overview(report: AnalysisReport) -> str:
         sections.append("## Key Dependencies")
         sections.append("")
         for dep_type, dep_data in report.dependencies.items():
-            if not dep_data.get("found"): continue
+            if not dep_data.get("found"): continue  # noqa: E701
             sections.append(f"### {dep_type.replace('_', ' ').title()}")
             sections.append("")
             deps = dep_data.get("dependencies", [])

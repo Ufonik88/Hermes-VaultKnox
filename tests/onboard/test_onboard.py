@@ -13,7 +13,6 @@ from vaultknox.onboard.config import OnboardConfig
 from vaultknox.onboard.documenter.engine import DocGenerator
 from vaultknox.onboard.sandbox.executor import SandboxExecutor
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -28,8 +27,8 @@ def sample_node_project() -> Path:
         "scripts": {"build": "tsc", "test": "jest", "lint": "eslint ."},
         "engines": {"node": ">=18"},
     }))
-    (tmp / "src").mkdir(); (tmp / "src" / "index.js").write_text("console.log('hello');")
-    (tmp / "tests").mkdir(); (tmp / "tests" / "index.test.js").write_text("test('works', () => {});")
+    (tmp / "src").mkdir(); (tmp / "src" / "index.js").write_text("console.log('hello');")  # noqa: E702
+    (tmp / "tests").mkdir(); (tmp / "tests" / "index.test.js").write_text("test('works', () => {});")  # noqa: E702
     (tmp / "tsconfig.json").write_text(json.dumps({"compilerOptions": {"strict": True}}))
     (tmp / ".env.example").write_text("API_KEY=your_key_here\nDATABASE_URL=postgres://localhost:5432/db\n")
     return tmp
@@ -44,8 +43,8 @@ version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = ["click>=8.1.0"]
 """)
-    (tmp / "src").mkdir(); (tmp / "src" / "main.py").write_text("def main(): pass")
-    (tmp / "tests").mkdir(); (tmp / "tests" / "test_main.py").write_text("def test_works(): assert True")
+    (tmp / "src").mkdir(); (tmp / "src" / "main.py").write_text("def main(): pass")  # noqa: E702
+    (tmp / "tests").mkdir(); (tmp / "tests" / "test_main.py").write_text("def test_works(): assert True")  # noqa: E702
     return tmp
 
 
