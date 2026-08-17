@@ -84,7 +84,7 @@ _TOOL_SCHEMAS = {
 
 def _create_server() -> Server:
     """Create and configure the MCP server."""
-    server = Server(name="vaultknox", version=__version__)
+    server = Server("vaultknox", __version__)
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
