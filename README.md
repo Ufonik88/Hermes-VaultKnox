@@ -2,11 +2,20 @@
 
 ![VaultKnox Logo](https://raw.githubusercontent.com/Ufonik88/Hermes-VaultKnox/main/src/vaultknox/assets/vaultknox-logo.png)
 
-VaultKnox is an encrypted secrets vault designed for Hermes Agent workflows. It provides a Python package and CLI for storing sensitive data locally, returning masked references to agents, and issuing short-lived tokens for automation without exposing plaintext in chat logs or memory files.
+VaultKnox is an encrypted secrets vault for Hermes Agent. It stores sensitive data locally, returns masked references and short-lived tokens to the agent, and ships a self-contained Hermes plugin that redacts secrets from chat before they reach session storage.
+
+## Documentation Map
+
+| Topic | Where |
+|---|---|
+| Plugin install, hooks, verification, troubleshooting | [docs/AGENT_INTEGRATION.md](docs/AGENT_INTEGRATION.md) |
+| Plugin install, verification, and operator checklist | [docs/PLUGIN.md](docs/PLUGIN.md) |
+| Hermes write-gate operations (production guide) | [docs/hermes-write-gate-operations.md](docs/hermes-write-gate-operations.md) |
+| Per-version change log | [CHANGELOG.md](CHANGELOG.md) |
 
 ## Status
 
-VaultKnox v0.7.1 is in **alpha** (Development Status :: 3 - Alpha).
+VaultKnox v0.8.0 is in **alpha** (Development Status :: 3 - Alpha).
 
 - Intended use: local development and operator-managed Hermes environments.
 - Review the threat model before deploying in high-risk environments.
@@ -18,46 +27,32 @@ Author: Ufonik
 
 This project is released under the Apache 2.0 license. The code remains copyrighted to Ufonik while permitting public use, modification, and redistribution under that license.
 
-
-## Getting Started
-
-### Installation
+## Quick Start
 
 ```bash
+# Editable install (dev extras optional)
+python -m venv .venv && source .venv/bin/activate
 pip install -e .[dev]
+
+# Initialize a vault and add a secret
+hermes-vault init
+hermes-vault add --id OPENAI_API_KEY --type api_key \
+  --label "OpenAI API Key" \
+  --data '{"value":"sk-xxxxxxxxxxxxxxxxxxxxxxxx"}'
+
+# Unlock a session, then retrieve a masked reference with a one-time token
+hermes-vault unlock
+hermes-vault get OPENAI_API_KEY --mask --purpose "demo request"
+
+# Deploy the secret-guard plugin into Hermes
+hermes-vault install-hooks
+# Then enable in ~/.hermes/config.yaml:
+#   plugins:
+#     enabled:
+#       - vaultknox
 ```
 
-### Initialize the Encrypted Store
-
-```bash
-hermes-secrets init
-```
-
-### Add Your First API Key
-
-```bash
-hermes-secrets add NOTION_API_KEY=your-secret-key-here
-```
-
-### Use in a Script
-
-```python
-from vaultknox.autonomous_secrets import AutonomousSecretsStore
-
-secrets = AutonomousSecretsStore()
-api_key = secrets.get("NOTION_API_KEY")
-print(f"API Key: {api_key}")
-```
-
-### Use in Cron Jobs
-
-Add this line to the top of your cron prompt:
-
-```bash
-eval "$(python3 ~/.hermes/encrypted-secrets/secrets_manager.py env)"
-```
-
-Then access credentials as environment variables.
+Every command above is shipped by VaultKnox itself; `hermes-vault --help` lists the full surface.
 
 
 ## Key Design
@@ -92,7 +87,10 @@ Compromise of any sub-key does not expose the master key or any other sub-key's 
 - Backup export and import with integrity signing
 - Audit logging with owner-only permissions and rotation
 - Hermes integration wrapper with write actions disabled by default
-- **v0.7.1** — Agent-facing secret handling hardening: scanner/hermes_tool/secret_guard findings return SHA-256 fingerprints instead of raw matched text; dashboard uses HTML escaping and HttpOnly/SameSite-Strict cookies for auth; OAuth token URLs enforced HTTPS-only; MCP server supports `VAULTKNOX_RUNTIME_DIR` isolation; `sanitize-history` targets only known Hermes message columns instead of arbitrary SQLite tables.
+- **v0.8.0** — Catalog-ready Hermes plugin shipped inside the package at `src/vaultknox/_hermes_plugin/`. `hermes-vault install-hooks` deploys it to `~/.hermes/plugins/vaultknox/`. Three hooks (`pre_gateway_dispatch`, `pre_llm_call`, `transform_llm_output`) plus the `vaultknox` tool, gated by package import. Hook contracts fixed so inbound redaction is live again on current Hermes.
+- **v0.8.0** — Detector registry expanded to **28 patterns** (added Google API key, GCP key material, Azure connection string, JWT, high-entropy assignment, etc., across earlier security work).
+- **v0.8.0** — Standardized guidance on `hermes-vault add ... --data ...` (the shipped CLI); old `vault-add-key` references removed.
+- **v0.7.3** — Onboard sandbox switched to argv-based execution, sensitive-path and credential-environment blocking, process-group timeout kill.
 - **v0.7.0** — Session-derived key flow completed for agent paths: operator unlock establishes session key, and agent actions no longer require `master_password`
 - **v0.7.0** — Policy Engine v2 is now enforced in `vault_tool` and MCP access paths with deny-by-default, service/action checks, capability gates, and token TTL clamping
 - **v0.7.0** — OAuth secrets now auto-refresh on read when near expiry, with safe failure fallback (`refresh_failed`) and no token logging
@@ -110,7 +108,7 @@ Compromise of any sub-key does not expose the master key or any other sub-key's 
 - **v0.6.1** — Timezone-naive token expiry and lockout timestamps handled safely (extends v0.6.0 expiry fix)
 - **v0.6.0** — MCP Server crash fixed: `Path` import added, dead imports removed, path resolution corrected so `vaultknox_scan` and health tools execute without NameError
 - **v0.6.0** — Generic bearer verification fixed: `_verify_generic_bearer` now registered and usable via `--service generic_bearer`
-- **v0.6.0** — Gateway plugin deployment fixed: `install-hooks` now writes the full `__init__.py` (with `pre_gateway_dispatch`, `pre_llm_call`, `post_llm_call` + `register(ctx)`) instead of only warning
+- **v0.6.0** — Gateway plugin deployment fixed: `install-hooks` now writes the full `__init__.py` (with the three current hooks plus `register(ctx)`) instead of only warning (the hook contracts themselves were corrected again in v0.8.0)
 - **v0.6.0** — Timezone-naive expiry dates handled safely: no more `TypeError` from comparing naive `datetime` against `datetime.now(timezone.utc)`
 - **v0.6.0** — Redaction corruption fixed: overlapping/nested secret spans merged before replacement, preventing `[REDACT[REDACTED...` output
 - **v0.5.0** — MCP Server: stdio-based MCP transport for direct agent integration
@@ -120,8 +118,8 @@ Compromise of any sub-key does not expose the master key or any other sub-key's 
 - **v0.5.0** — Policy Engine v2: per-agent, per-service action policies
 - **v0.5.0** — Secret type: `oauth` with auto-refresh tokens
 - **v0.4.2** — Outbound response scanner: catches AI responses that ask users to paste secrets and rewrites them with safe guidance. System prompt injection proactively instructs the AI to never request secrets. New `agent_requests_secret` critical trigger.
-- **v0.4.1** — Fixed dormant secret-guard hook: added `message:received` emitter and `pre_gateway_dispatch` plugin so redaction actually fires on incoming messages
-- **v0.4.0** — 26 built-in secret detectors for chat and file scanning
+- **v0.4.1** — Fixed dormant secret-guard hook so redaction actually fires on incoming messages (this round, the protection was unreliable on newer Hermes and is fully restored in v0.8.0)
+- **v0.4.0** — Built-in secret detectors for chat and file scanning (28 patterns today; the v0.4.0 release shipped 26, expanded in later security work)
 - **v0.4.0** — Proactive `scan_text` tool action for runtime secret detection
 - **v0.4.0** — Secret-guard hook for automatic chat message redaction
 - **v0.4.0** — `sanitize-history` CLI for cleaning leaked secrets from persistent stores
@@ -144,6 +142,14 @@ VaultKnox does not claim to defend against:
 - keyloggers
 - advanced memory extraction on an unlocked process
 - formal regulatory compliance requirements by itself
+
+## Screenshots
+
+![VaultKnox CLI quick start](docs/images/quickstart-terminal.png)
+
+![Secret protection hooks in action](docs/images/protection-flow.png)
+
+![Plugin verification](docs/images/plugin-verify.png)
 
 ## Installation
 
@@ -196,6 +202,7 @@ Default runtime files are stored under `~/.hermes/`:
 
 - `~/.hermes/vaultknox/` — legacy master-password vault (optional)
 - `~/.hermes/encrypted-secrets/` — autonomous key-file-backed encrypted store (recommended)
+- `~/.hermes/plugins/vaultknox/` — Hermes plugin (installed by `hermes-vault install-hooks`)
 
 The `encrypted-secrets/` directory contains:
 - `master.key` — autonomous store key (v2 AES-256-GCM, chmod 600, never in logs)
@@ -221,7 +228,7 @@ The safest integration path is the `vault_tool` wrapper in `src/vaultknox/hermes
 | `get_token` | Issue single-use token for automation | No |
 | `inject_env` | Inject a secret into an environment variable | Yes |
 | `consume_token` | Exchange a one-time token for plaintext | No |
-| `scan_text` | Scan arbitrary text for secrets using 26 detectors | No |
+| `scan_text` | Scan arbitrary text for secrets using 28 detectors | No |
 | `add` | Add new secret | Yes |
 | `update` | Update existing secret | Yes |
 | `delete` | Remove secret | Yes |
@@ -260,15 +267,19 @@ src/vaultknox/
 ├── config.py                # Paths and defaults
 ├── cli.py                   # Click entry point (vault + secrets + audit + expiry + ops)
 ├── hermes_tool.py           # Hermes `vaultknox` tool wrapper (includes scan_text)
-├── detectors.py             # 26 built-in secret detector patterns
+├── detectors.py             # 28 built-in secret detector patterns
 ├── scanner.py               # File scanner for plaintext secrets and permission issues
 ├── agent_guide/             # Agent autonomy package (triggers + system prompts)
 │   ├── __init__.py
 │   ├── triggers.py          # Context-based trigger detection
 │   └── prompts.py           # Safe system-prompt snippets for agents
-├── hooks/                   # Hermes gateway hook implementations
+├── _hermes_plugin/          # Catalog-ready Hermes plugin (installed by install-hooks)
+│   ├── __init__.py          # Hook implementations + tool registration
+│   ├── detectors.py         # Vendored (byte-equal to vaultknox.detectors)
+│   └── plugin.yaml          # Manifest: hooks + tools
+├── hooks/                   # Legacy gateway hook implementation (superseded by v0.8.0 plugin)
 │   ├── __init__.py
-│   └── secret_guard.py      # Chat message secret redaction hook
+│   └── secret_guard.py      # Replaced by _hermes_plugin in v0.8.0
 ├── rotation.py              # Master key rotation with pre-rotation backup
 ├── verifier.py              # Live credential verification against provider APIs
 ├── health.py                # Vault health checks (DB, permissions, integrity)
@@ -411,23 +422,69 @@ hermes-vault secrets list
 hermes-vault secrets env --shell
 ```
 
-## Chat Secret Detection & Agent Autonomy (v0.4.0)
+## Hermes Plugin (v0.8.0)
 
-VaultKnox v0.4.0 introduces **chat secret detection** and an **agent autonomy package**
-to prevent secrets from leaking into chat logs, session storage, and agent memory.
+The package ships a catalog-ready plugin at `src/vaultknox/_hermes_plugin/`. When deployed by `hermes-vault install-hooks`, the plugin copies three files (`__init__.py`, `detectors.py`, `plugin.yaml`) into `~/.hermes/plugins/vaultknox/` and the operator enables it once in Hermes config. No global Python paths or compile step.
 
-### 26 Built-In Secret Detectors
+### What the plugin registers
 
-VaultKnox ships with 26 regex-based detectors covering the most common secret types:
+| Registration | Direction | Effect |
+|---|---|---|
+| Hook `pre_gateway_dispatch` | Inbound | Reads `event.text`, runs the 28-detector registry, and returns `{"action": "rewrite", "text": "<notice + redacted message>"}` when secrets are found. Fires before persistence, so redacted content never reaches session storage. |
+| Hook `pre_llm_call` | Per LLM turn | Injects the secret-handling rules from `vaultknox.agent_guide.prompts.get_system_prompt_snippet()` once per conversation as `{"context": ...}`. |
+| Hook `transform_llm_output` | Outbound | Scans assistant responses for phrases that ask the user to share a secret (e.g. "drop your api key") and rewrites them with safe CLI guidance. Returns the replacement string. |
+| Tool `vaultknox` | Agent-callable | Vault operations: `status`, `list`, `get_masked`, `get_token`, `consume_token`, `scan_text`, plus write actions (`add`, `update`, `delete`, `inject_env`, `revoke_token`) gated by `allow_write=True`. Registered only when the `vaultknox` package is importable (check_fn probe). |
+
+The plugin manifest is `src/vaultknox/_hermes_plugin/plugin.yaml`. Hook contracts target Hermes >=0.19; the inbound-redaction payload/return shape is the one consumed by current Hermes, so protection is live again after v0.8.0.
+
+### Install
+
+```bash
+hermes-vault install-hooks
+```
+
+Then enable it in `~/.hermes/config.yaml`:
+
+```yaml
+plugins:
+  enabled:
+    - vaultknox
+```
+
+Restart the Hermes gateway. The installer prints the destination directory and reports the superseded `vaultknox-secret-guard` plugin directory and the legacy `~/.hermes/hooks/secret-guard/` directory, if present, without deleting them. Current Hermes does not consume hook-event write-backs; the legacy `secret-guard` hook was a no-op and is replaced by this plugin.
+
+### Verify
+
+1. The plugin directory exists with three files:
+
+    ```bash
+    ls ~/.hermes/plugins/vaultknox/
+    # __init__.py  detectors.py  plugin.yaml
+    ```
+
+2. The plugin name appears in the enabled list:
+
+    ```bash
+    grep -A2 "plugins:" ~/.hermes/config.yaml
+    ```
+
+3. Send yourself a message containing a test API key. The reply should arrive prefixed with the Security Notice and the key replaced by `[REDACTED-SENSITIVE-VALUE]`. Nothing should land in `~/.hermes/sessions/` for that turn.
+
+4. The `vaultknox` tool is exposed to the agent because the package is importable; calling the `scan_text` action against a string you control confirms it.
+
+If any of the above fail, see [docs/PLUGIN.md](docs/PLUGIN.md) for troubleshooting: not enabled, gateway not restarted, vault locked, package not importable, and similar.
+
+### 28 Built-In Secret Detectors
+
+VaultKnox ships with 28 regex-based detectors covering the most common secret types:
 
 | Category | Detectors |
 |---|---|
 | **Critical** | OpenAI API Key, GitHub PAT (classic, fine-grained, OAuth, impersonation, refresh), Anthropic API Key, AWS Access Key ID, AWS Secret Access Key, Slack Token, Stripe Secret Key, Twilio API Key, SendGrid API Key, NPM Access Token, RSA/DSA/EC Private Keys |
-| **High** | Generic API Key Pattern, Generic Secret Key Pattern, Generic Access Token Pattern, Generic Auth Token Pattern, Generic Secret Variable Pattern, Bearer Token |
-| **Medium** | Generic Password Pattern in Config, Stripe Publishable Key |
+| **High** | Generic API Key Pattern, Generic Secret Key Pattern, Generic Access Token Pattern, Generic Auth Token Pattern, Generic Secret Variable Pattern, Bearer Token, Google API Key, JWT |
+| **Medium** | Generic Password Pattern in Config, Stripe Publishable Key, GCP key material, Azure connection string, high-entropy assignment |
 
-All patterns live in `src/vaultknox/detectors.py`. Adding a new detector is a
-single `_register()` call — no scanner logic changes required.
+All patterns live in `src/vaultknox/detectors.py`. Adding a new detector is a single `_register()` call; the plugin's vendored copy stays byte-equal automatically through the sync test in `tests/test_hermes_plugin_sync.py`.
 
 ### Proactive Scanning with `scan_text`
 
@@ -437,69 +494,69 @@ Hermes can scan arbitrary text for secrets at runtime using the `vaultknox` tool
 vaultknox(action="scan_text", text="Here is my key: sk-abc123...")
 ```
 
-Returns a structured list of findings with detector name, severity, matched text,
-and character span — useful for sanitising user input before logging it.
+Returns a structured list of findings with detector name, severity, SHA-256 fingerprint, and character span. The matched value is never returned; sanitize user input before logging it.
 
 ### File Scanning
 
 Scan the filesystem for plaintext secrets and permission issues:
 
 ```bash
-vaultknox scan                          # Default paths
-vaultknox scan --paths /path/to/repo    # Custom paths
-vaultknox scan --format json            # Machine-readable output
+hermes-vault scan                          # Default paths
+hermes-vault scan --paths /path/to/repo    # Custom paths
+hermes-vault scan --format json            # Machine-readable output
 ```
 
 The scanner checks:
-- 26 secret patterns across `.env`, `.json`, `.yaml`, `.yml`, `.sh`, `.bashrc`, `.zshrc`, `.profile`
+
+- 28 secret patterns across `.env`, `.json`, `.yaml`, `.yml`, `.sh`, `.bashrc`, `.zshrc`, `.profile`
 - Duplicate secrets across files
 - World-readable and group-readable secret files
 
-### Secret-Guard Hook: `vaultknox install-hooks`
-
-Deploy a Hermes gateway hook that automatically redacts secrets from incoming
-chat messages **before** they hit session storage:
-
-```bash
-vaultknox install-hooks
-```
-
-This writes `~/.hermes/hooks/secret-guard/` with:
-- `handler.py` — thin wrapper importing `vaultknox.hooks.secret_guard`
-- `HOOK.yaml` — event registration (`message:received`)
-
-Detected secrets are replaced with `[REDACTED-SENSITIVE-VALUE]` in-place.
-
-### Sanitize History: `vaultknox sanitize-history`
+### Sanitize History: `hermes-vault sanitize-history`
 
 If a secret was accidentally pasted into chat, clean it up from persistent stores:
 
 ```bash
-vaultknox sanitize-history              # Dry-run preview
-vaultknox sanitize-history --apply      # Actually redact
+hermes-vault sanitize-history              # Dry-run preview
+hermes-vault sanitize-history --apply      # Actually redact
 ```
 
 Scans and redacts:
+
 - `~/.hermes/sessions/*.jsonl`
 - `~/.hermes/state.db` (known Hermes message columns: `content`, `tool_calls`, `reasoning`, `reasoning_details`, `reasoning_content`, `codex_message_items`)
 - `~/.hermes/.hermes_history`
 
 ### Agent Autonomy Package (`agent_guide/`)
 
-The `agent_guide/` module gives AI agents context-aware guidance without leaking
-encryption internals.
+The `agent_guide/` module gives AI agents context-aware guidance without leaking encryption internals.
 
-**Trigger detection** (`check_triggers`) — keyword + context heuristics for:
+Trigger detection (`check_triggers`) — keyword plus context heuristics for:
+
 - `user_pastes_secret` — warn and suggest vault storage
 - `user_asks_store_key` — guide to CLI or tool workflow
 - `agent_needs_api_key` — check vault before asking user
-- `agent_requests_secret` — **STOP** never ask user to paste secrets in chat
+- `agent_requests_secret` — STOP, never ask user to paste secrets in chat
 - `script_needs_secret` — inject vault-loading patterns, never hardcode
-- `cron_job_needs_auth` — recommend AutonomousSecretsStore
+- `cron_job_needs_auth` — recommend `AutonomousSecretsStore`
 
-**System prompt snippet** (`get_system_prompt_snippet`) — a safe markdown block
-you can inject into any agent's system prompt. Contains no file paths, no master
-password mechanics — just behavioural rules.
+System prompt snippet (`get_system_prompt_snippet`) — a safe markdown block you can inject into any agent's system prompt. Contains no file paths, no master password mechanics; just behavioural rules. The plugin uses the same snippet (kept byte-equal) for `pre_llm_call`.
+
+### Safe Storage Reference
+
+Direct users to the shipped CLI (bypasses chat entirely):
+
+```bash
+hermes-vault add --id OPENAI_API_KEY --type api_key \
+  --label "OpenAI API Key" \
+  --data '{"value":"sk-xxxxxxxxxxxxxxxxxxxxxxxx"}'
+```
+
+### What is gone (do not rely on these)
+
+- `vaultknox-secret-guard` plugin and the `~/.hermes/hooks/secret-guard/` legacy hook are superseded.
+- `vault-add-key` is not part of the public install; use `hermes-vault add ... --data ...`.
+- `post_llm_call`, `message:received`, and `system_message` injection are not current hook names.
 
 ### VaultKnox Onboard (v0.7.2)
 
@@ -511,24 +568,24 @@ The `onboard` command group exposes:
 
 | Command | Purpose |
 |---|---|
-| `vaultknox onboard analyze` | Detect languages, frameworks, dependency manifests, entry points, test directories, and repo structure (read-only). |
-| `vaultknox onboard document` | Generate `AGENTS.md`, `README.md`, `SETUP.md`, and `ARCHITECTURE.md` from analysis; existing user-authored files are never overwritten. |
-| `vaultknox onboard setup` | Install dependencies, run build checks, and surface missing environment variables. |
-| `vaultknox onboard full` | The recommended first-contact pipeline: analyze → document → setup in one run. |
-| `vaultknox onboard install-plugin` | Deploy the `vaultknox-onboard` gateway plugin to `~/.hermes/plugins/` for automatic onboarding-request detection. |
-| `vaultknox onboard generate-skill` | Emit a `SKILL.md` contract describing VaultKnox Onboard for sub-agents. |
+| `hermes-vault onboard analyze` | Detect languages, frameworks, dependency manifests, entry points, test directories, and repo structure (read-only). |
+| `hermes-vault onboard document` | Generate `AGENTS.md`, `README.md`, `SETUP.md`, and `ARCHITECTURE.md` from analysis; existing user-authored files are never overwritten. |
+| `hermes-vault onboard setup` | Install dependencies, run build checks, and surface missing environment variables. |
+| `hermes-vault onboard full` | The recommended first-contact pipeline: analyze → document → setup in one run. |
+| `hermes-vault onboard install-plugin` | Deploy the `vaultknox-onboard` gateway plugin to `~/.hermes/plugins/` for automatic onboarding-request detection. |
+| `hermes-vault onboard generate-skill` | Emit a `SKILL.md` contract describing VaultKnox Onboard for sub-agents. |
 
 Example — analyze a repository without making changes:
 
 ```bash
-vaultknox onboard analyze --dry-run /path/to/repo
+hermes-vault onboard analyze --dry-run /path/to/repo
 ```
 
 `--dry-run` performs analysis without caching results. Existing documentation
 files are always preserved; the documenter skips any file that already exists
 and was authored by a human.
 
-**Sandboxing note.** `vaultknox onboard setup` and `onboard full` run dependency
+**Sandboxing note.** `hermes-vault onboard setup` and `onboard full` run dependency
 installers and build commands through `SandboxExecutor`, which now uses
 `subprocess.Popen(..., shell=False, argv=shlex.split(command))` instead of
 `shell=True`. Shell metacharacters are tokenized as literals, sensitive paths
@@ -537,20 +594,23 @@ execution. The allowlist controls which binaries may run; unknown commands are
 rejected.
 
 
-### Other v0.4.0 Operations
+### Other Operations
 
 | Command | Purpose |
 |---|---|
-| `vaultknox health` | Full vault health check (DB integrity, permissions, encryption, autonomous store) |
-| `vaultknox verify` | Live credential verification against provider APIs (OpenAI, Anthropic, GitHub, etc.) |
-| `vaultknox rotate-master-key` | Atomic master-key rotation with pre-rotation backup |
-| `vaultknox audit query` | Query audit log with filters (action, status, date range) |
-| `vaultknox expiry set-expiry <id> --days 30` | Set secret expiration |
-| `vaultknox expiry notify` | List expired or soon-to-expire secrets |
+| `hermes-vault health` | Full vault health check (DB integrity, permissions, encryption, autonomous store) |
+| `hermes-vault verify` | Live credential verification against provider APIs (OpenAI, Anthropic, GitHub, etc.) |
+| `hermes-vault rotate-master-key` | Atomic master-key rotation with pre-rotation backup |
+| `hermes-vault audit query` | Query audit log with filters (action, status, date range) |
+| `hermes-vault expiry set-expiry <id> --days 30` | Set secret expiration |
+| `hermes-vault expiry notify` | List expired or soon-to-expire secrets |
+| `hermes-vault scan` | File scanner for plaintext secrets and permission issues |
+| `hermes-vault sanitize-history` | Redact leaked secrets from persistent session stores |
+| `hermes-vault install-hooks` | Deploy the VaultKnox plugin into `~/.hermes/plugins/vaultknox/` |
 
-## Changelog / What's New
+## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for the complete version history, including the v0.7.2 Onboard release.
+See [CHANGELOG.md](CHANGELOG.md) for the complete version history, including the v0.8.0 plugin release and v0.7.2 Onboard release.
 
 ## Release Guidance
 
@@ -558,3 +618,4 @@ Before treating VaultKnox as broadly usable:
 
 1. Verify no secrets or local vault files are committed.
 2. Review the [Hermes write-gate operations guide](docs/hermes-write-gate-operations.md) before enabling write access for Hermes.
+3. After install or upgrades, run `hermes-vault install-hooks` and confirm the plugin is enabled in `~/.hermes/config.yaml`.

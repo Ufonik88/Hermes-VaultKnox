@@ -4,12 +4,14 @@
 
 This guide defines how to run VaultKnox safely when Hermes Agent is integrated. The default stance is deny-by-default for writes so Hermes can read masked data and issue tokens without modifying stored secrets unless an operator explicitly allows it.
 
+The v0.8.0 plugin is the integration path; install it via `hermes-vault install-hooks` and enable it in `~/.hermes/config.yaml`. See [docs/AGENT_INTEGRATION.md](AGENT_INTEGRATION.md) and [docs/PLUGIN.md](PLUGIN.md) for install and verification steps.
+
 ## Security Model
 
 - Default mode: Hermes write actions are blocked.
-- Allowed by default: status, lock, unlock, list, get_masked, get_token.
-- Blocked by default: add, update, delete.
-- Elevation path: write actions require allow_write=true in the calling integration.
+- Allowed by default: status, lock, unlock, list, get_masked, get_token, consume_token, scan_text.
+- Blocked by default: add, update, delete, inject_env, revoke_token.
+- Elevation path: write actions require `allow_write=true` in the calling integration, and the master vault must be unlocked by an operator. Agent actions use the session-derived key (v0.7.0+) and never accept `master_password`.
 
 ## Deployment Defaults
 
@@ -35,8 +37,8 @@ This guide defines how to run VaultKnox safely when Hermes Agent is integrated. 
 
 ## Suggested Integration Guardrails
 
-- Require an explicit operator flag before passing allow_write=true.
-- Require master password entry per write session.
+- Require an explicit operator flag before passing `allow_write=true`.
+- Confirm the master vault is unlocked by an operator before agent writes; the agent uses the session-derived key (v0.7.0+).
 - Add a caller identity field to audit details at integration boundaries.
 - Add policy checks that reject write calls outside approved automation contexts.
 
