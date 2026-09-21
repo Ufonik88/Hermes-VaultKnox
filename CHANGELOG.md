@@ -5,6 +5,30 @@ All notable changes to VaultKnox are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] — 2026-09-21
+
+### Added
+
+- **Catalog-ready Hermes plugin shipped inside the package** (`src/vaultknox/_hermes_plugin/`). A single self-contained plugin directory registers three hooks and one tool:
+  - `pre_gateway_dispatch` — redacts API keys, tokens, and passwords from inbound messages before they are stored, using the vendored detector registry.
+  - `pre_llm_call` — injects the secret-handling rules into the agent's per-turn context (once per conversation).
+  - `transform_llm_output` — rewrites outbound responses that ask the user to share a secret.
+  - `vaultknox` tool — vault operations (masked reads, one-time tokens, secret scanning); exposed automatically when the `vaultknox` package is importable.
+- **`hermes-vault install-hooks` now deploys the packaged plugin** to `~/.hermes/plugins/vaultknox/` (previously it generated a plugin copy inline). It reports superseded `vaultknox-secret-guard` plugin and legacy hook directories but never deletes them.
+- **Plugin contract and sync test suites.** `tests/test_hermes_plugin.py` pins the plugin to the current Hermes hook payload/return shapes; `tests/test_hermes_plugin_sync.py` proves the plugin loads standalone (with the package unavailable) and keeps the vendored copies byte-equal to the package originals.
+
+### Fixed
+
+- **Hook contract drift in the secret-guard plugin (protection restored).** The generated plugin used shapes the current Hermes runtime no longer consumes. Outbound rewriting now happens on `transform_llm_output` (`post_llm_call` results are discarded), inbound redaction reads `event.text` from the `pre_gateway_dispatch` payload and returns `{"action": "rewrite", "text": ...}`, and prompt rules return `{"context": ...}`. Inbound redaction is live for the first time on current Hermes builds.
+- **`vaultknox-onboard` plugin.** Removed the dead `pre_gateway_dispatch` hook (`onboard_repo` is not a supported gateway action) and repaired the invalid `plugin.yaml` (a stray docstring line made it unparseable).
+- **Guidance standardized on the shipped CLI.** The system-prompt snippet, outbound rewrite, and trigger actions now reference `hermes-vault add ...` instead of `vault-add-key`, which was never part of the public install.
+- **GCP private-key detector no longer trips secret scanners on its own definition** — the header literal is assembled from adjacent strings.
+
+### Verification
+
+- `python -m pytest tests/` → **passed**; `ruff check src tests` → clean
+- `hermes plugins validate` against the packaged plugin directory → all checks pass (manifest, capability probe, declared hooks/tools/middleware, security scan)
+
 ## [0.7.3] — 2026-07-14
 
 ### Security
@@ -18,10 +42,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `PYTHONPATH=src python -m pytest -q` → **passed**
 - New regression suite: `tests/onboard/test_onboard.py::TestSandboxSecurity` (8 tests covering metacharacters, sensitive paths, env stripping, and timeout kill behavior).
-
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.7.2] — 2026-07-10
 

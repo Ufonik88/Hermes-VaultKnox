@@ -154,15 +154,30 @@ class TestSandbox:
 # ---------------------------------------------------------------------------
 
 class TestPlugin:
-    def test_detect_onboarding_trigger(self) -> None:
-        from vaultknox.onboard.plugin import on_pre_gateway_dispatch
-        result = on_pre_gateway_dispatch(user_message="please onboard this repo /Users/test/project")
-        assert result is not None and result.get("action") == "onboard_repo"
+    def test_register_registers_pre_llm_call_only(self) -> None:
+        from vaultknox.onboard import plugin as onboard_plugin
 
-    def test_no_trigger_for_normal_message(self) -> None:
-        from vaultknox.onboard.plugin import on_pre_gateway_dispatch
-        result = on_pre_gateway_dispatch(user_message="write a function that sorts an array")
-        assert result is None
+        class Ctx:
+            def __init__(self) -> None:
+                self.hooks: list[str] = []
+
+            def register_hook(self, name, callback) -> None:
+                self.hooks.append(name)
+
+        ctx = Ctx()
+        onboard_plugin.register(ctx)
+        assert ctx.hooks == ["pre_llm_call"]
+
+    def test_plugin_yaml_is_valid(self) -> None:
+        import yaml
+
+        manifest_path = (
+            Path(__file__).resolve().parents[2]
+            / "src" / "vaultknox" / "onboard" / "plugin.yaml"
+        )
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        assert manifest["name"] == "vaultknox-onboard"
+        assert manifest["provides_hooks"] == ["pre_llm_call"]
 
     def test_pre_llm_call_injects_snippet(self) -> None:
         from vaultknox.onboard.plugin import on_pre_llm_call

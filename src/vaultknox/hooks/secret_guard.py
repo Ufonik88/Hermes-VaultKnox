@@ -54,7 +54,8 @@ OUTBOUND_REWRITE = (
     "⚠️ **Security Notice:** I should not ask you to share secrets in chat. "
     "To securely store your API key, use:\n"
     "```\n"
-    "vault-add-key <id> \"<description>\" <key>\n"
+    "hermes-vault add --id <id> --type api_key --label \"<description>\" "
+    "--data '{\"value\":\"<key>\"}'\n"
     "```"
 )
 

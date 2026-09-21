@@ -140,7 +140,7 @@ class TestAgentGuideTriggers:
         snippet = get_system_prompt_snippet()
         assert isinstance(snippet, str)
         assert "NEVER" in snippet
-        assert "vault-add-key" in snippet
+        assert "hermes-vault add" in snippet
 
     def test_system_prompt_snippet_length(self):
         snippet = get_system_prompt_snippet()

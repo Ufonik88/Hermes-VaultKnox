@@ -12,7 +12,7 @@ TRIGGERS: list[dict] = [
         "description": "User message contains what looks like an API key, token, or password",
         "action": (
             "Warn user not to paste secrets. "
-            "Suggest vault-add-key CLI or 'store in vault' workflow."
+            "Suggest hermes-vault CLI or 'store in vault' workflow."
         ),
         "priority": "critical",
         "keywords": [
@@ -26,7 +26,7 @@ TRIGGERS: list[dict] = [
         "id": "user_asks_store_key",
         "description": "User explicitly asks to store a credential, API key, or password",
         "action": (
-            "Guide user to vault-add-key CLI or offer to store via vault tool. "
+            "Guide user to hermes-vault CLI or offer to store via vault tool. "
             "Never accept the secret value in chat."
         ),
         "priority": "high",
@@ -81,7 +81,7 @@ TRIGGERS: list[dict] = [
         "description": "Agent is about to ask the user to provide an API key, token, or password in chat",
         "action": (
             "STOP. Never ask the user to paste a secret in chat. "
-            "Guide them to vault-add-key CLI or offer to store via vault tool. "
+            "Guide them to hermes-vault CLI or offer to store via vault tool. "
             "If you need the key for an API call, use get_masked + one-time token."
         ),
         "priority": "critical",

@@ -85,7 +85,7 @@ class TestOutboundPatternDetection:
         assert len(matches) >= 1
 
     def test_scan_outbound_no_match(self) -> None:
-        text = "To add your API key, run: vault-add-key openai_key \"OpenAI API Key\" sk-xxx"
+        text = "To add your API key, run: hermes-vault add --id openai --type api_key --label \"OpenAI API Key\" --data '{\"value\":\"sk-xxx\"}'"
         matches = scan_outbound(text)
         assert matches == []
 
@@ -120,7 +120,7 @@ class TestOutboundRewriting:
         rewritten = rewrite_outbound(text, matches)
         assert "drop your key" not in rewritten
         assert "⚠️ **Security Notice:**" in rewritten
-        assert "vault-add-key" in rewritten
+        assert "hermes-vault" in rewritten
 
     def test_preserves_surrounding_text(self) -> None:
         text = "Sure! Drop your api key here and I'll set it up for you."
@@ -131,7 +131,7 @@ class TestOutboundRewriting:
         assert "drop your api key here" not in rewritten
 
     def test_no_match_returns_original(self) -> None:
-        text = "Use vault-add-key to store your secret safely."
+        text = "Use hermes-vault to store your secret safely."
         matches = scan_outbound(text)
         rewritten = rewrite_outbound(text, matches)
         assert rewritten == text
@@ -154,7 +154,7 @@ class TestOutboundRewriting:
         text = "Let's get started—just drop your key"
         matches = scan_outbound(text)
         rewritten = rewrite_outbound(text, matches)
-        assert rewritten.endswith("vault-add-key <id> \"<description>\" <key>\n```")
+        assert rewritten.endswith("--data '{\"value\":\"<key>\"}'\n```")
 
     def test_multiple_distinct_phrases(self) -> None:
         text = "First, paste your key. Then, share your password."
@@ -177,7 +177,7 @@ class TestSystemPromptInjection:
     def test_snippet_contains_key_rules(self) -> None:
         snippet = get_system_prompt_snippet()
         assert "NEVER" in snippet
-        assert "vault-add-key" in snippet
+        assert "hermes-vault add" in snippet
         assert "get_masked" in snippet or "get_masked" in snippet.lower()
         assert "AutonomousSecretsStore" in snippet
         assert "paste" in snippet.lower() or "secret" in snippet.lower()
@@ -247,7 +247,7 @@ class TestAgentRequestsSecretTrigger:
 
     def test_trigger_action_guides_to_vault(self) -> None:
         trigger = next(t for t in TRIGGERS if t["id"] == "agent_requests_secret")
-        assert "vault-add-key" in trigger["action"] or "vault tool" in trigger["action"]
+        assert "hermes-vault" in trigger["action"] or "vault tool" in trigger["action"]
         assert "NEVER" in trigger["action"].upper() or "Stop" in trigger["action"].upper() or "never" in trigger["action"].lower()
 
     def test_trigger_sorted_before_high(self) -> None:
@@ -270,14 +270,14 @@ class TestFullOutboundFlow:
     """Integration test: AI asks for key → scanner detects → response rewritten."""
 
     def test_ai_asks_for_key_gets_rewritten(self) -> None:
-        """Simulate the complete post_llm_call flow."""
+        """Simulate the complete transform_llm_output flow."""
         ai_response = "Sure! Just drop your api key here and I'll configure it for you."
         matches = scan_outbound(ai_response)
         assert len(matches) >= 1, "Scanner should detect the secret-requesting phrase"
         rewritten = rewrite_outbound(ai_response, matches)
         assert "drop your api key here" not in rewritten
         assert "⚠️ **Security Notice:**" in rewritten
-        assert "vault-add-key" in rewritten
+        assert "hermes-vault" in rewritten
 
     def test_ai_says_paste_it_here(self) -> None:
         ai_response = "No problem, paste it here and I'll take care of it."
@@ -290,7 +290,7 @@ class TestFullOutboundFlow:
     def test_safe_response_unchanged(self) -> None:
         ai_response = (
             "To store your OpenAI key safely, run:\n"
-            "  vault-add-key openai_key \"OpenAI API Key\" <your-key>\n"
+            "  hermes-vault add --id openai_key --type api_key --label \"OpenAI API Key\" --data '{\"value\":\"<your-key>\"}'\n"
             "Then I can retrieve it via get_masked when needed."
         )
         matches = scan_outbound(ai_response)
@@ -307,8 +307,8 @@ class TestFullOutboundFlow:
         matches = scan_outbound(dangerous)
         assert len(matches) >= 1
 
-    def test_pre_llm_call_injection_plus_post_llm_rewrite(self) -> None:
-        """Full defense-in-depth: system prompt injected, then response rewritten if needed."""
+    def test_pre_llm_call_injection_plus_outbound_rewrite(self) -> None:
+        """Full defense-in-depth: prompt rules injected, then response rewritten if needed."""
         # Step 1: Inject system prompt
         original_system = "You are a helpful coding assistant."
         snippet = get_system_prompt_snippet()

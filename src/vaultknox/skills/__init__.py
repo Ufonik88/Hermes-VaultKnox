@@ -32,7 +32,7 @@ All credential access MUST go through VaultKnox — never hardcode secrets.
 - **NEVER** echo, log, or store credentials in plaintext
 - **ALWAYS** use `vaultknox get-masked` or the VaultKnox MCP tool to retrieve credentials
 - **NEVER** ask users to paste API keys in chat — redirect to CLI
-- **ALWAYS** deliver credentials via secure channels (Signal DM, not chat)
+- **ALWAYS** deliver credentials via secure out-of-band channels (never chat)
 - **ALWAYS** use ephemeral tokens when available
 
 ## Token Contract

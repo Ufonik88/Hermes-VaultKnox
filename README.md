@@ -185,8 +185,8 @@ hermes-vault --logo status
 ```bash
 hermes-vault init
 # hermes-vault unlock  # Legacy - not needed for autonomous secrets
-hermes-vault add --id revolut_card --type card --label "Revolut Virtual Card" --data '{"number":"4111111111111111","expiry":"12/28","cvv":"123","holder":"DJ C","bank":"Revolut"}'
-hermes-vault get revolut_card --mask --purpose booking
+hermes-vault add --id example_card --type card --label "Example Bank Card" --data '{"number":"4111111111111111","expiry":"12/28","cvv":"123","holder":"A. Example","bank":"Example Bank"}'
+hermes-vault get example_card --mask --purpose booking
 hermes-vault export --file backup.vault
 ```
 
@@ -286,8 +286,8 @@ src/vaultknox/
 ## Booking Flow Example
 
 ```text
-User: "Book Marble for 2 tomorrow at 7pm"
-1. vaultknox(action="get_masked", secret_id="revolut_card", purpose="booking")
+User: "Book a table for 2 tomorrow at 7pm"
+1. vaultknox(action="get_masked", secret_id="example_card", purpose="booking")
    -> masked card data and optional token
 2. Navigate to the booking flow and fill non-sensitive fields.
 3. If payment is required, exchange for a one-time token.

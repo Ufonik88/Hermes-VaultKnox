@@ -22,19 +22,19 @@ def test_initialize_add_and_mask(vault: VaultKnox) -> None:
 
     vault.add_secret(
         STRONG_PASSWORD,
-        "revolut_card",
+        "example_card",
         "card",
-        "Revolut Virtual Card",
+        "Example Bank Card",
         {
             "number": "4111111111111111",
             "expiry": "12/28",
             "cvv": "123",
-            "holder": "DJ C",
-            "bank": "Revolut",
+            "holder": "A. Example",
+            "bank": "Example Bank",
         },
     )
 
-    masked = vault.get_masked(STRONG_PASSWORD, "revolut_card", purpose="booking")
+    masked = vault.get_masked(STRONG_PASSWORD, "example_card", purpose="booking")
 
     assert masked["metadata"]["last4"] == "1111"
     assert masked["token"].startswith("vlt_")
@@ -178,15 +178,15 @@ def test_audit_log_does_not_contain_plaintext_secret(vault: VaultKnox) -> None:
     vault.unlock(STRONG_PASSWORD)
     vault.add_secret(
         STRONG_PASSWORD,
-        "revolut_card",
+        "example_card",
         "card",
-        "Revolut Virtual Card",
+        "Example Bank Card",
         {
             "number": "4111111111111111",
             "expiry": "12/28",
             "cvv": "123",
-            "holder": "DJ C",
-            "bank": "Revolut",
+            "holder": "A. Example",
+            "bank": "Example Bank",
         },
     )
 

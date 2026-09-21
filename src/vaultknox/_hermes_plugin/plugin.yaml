@@ -1,0 +1,22 @@
+name: vaultknox
+description: |
+  Secret-leak protection for Hermes chats. Scans inbound messages and
+  outbound responses for API keys, tokens, and passwords (28-pattern
+  detector registry) and redacts them before they reach session storage or
+  the user; injects safe secret-handling rules so the agent never asks for
+  secrets in chat. Registers the vaultknox tool when the vaultknox package
+  is installed. Zero dependencies; all detection is local.
+version: 0.8.0
+author: Ufonik / VaultKnox
+kind: standalone
+license: Apache-2.0
+homepage: https://github.com/Ufonik88/Hermes-VaultKnox
+requires_hermes: ">=0.19"
+provides_hooks:
+  - pre_gateway_dispatch
+  - pre_llm_call
+  - transform_llm_output
+provides_tools:
+  - vaultknox
+provides_middleware: []
+requires_env: []

@@ -16,7 +16,7 @@ When interacting with users about credentials or API keys:
 
 2. **To store a secret safely**, guide the user to:
    ```bash
-   vault-add-key <id> "<description>" <the-secret>
+   hermes-vault add --id <id> --type api_key --label "<description>" --data '{"value":"<the-secret>"}'
    ```
    This bypasses chat entirely and encrypts the secret immediately.
 
@@ -38,5 +38,5 @@ When interacting with users about credentials or API keys:
    - Warn the user
    - Do not echo the secret back
    - Suggest rotation if it was a real key
-   - Offer to help store it safely via `vault-add-key`
+   - Offer to help store it safely via `hermes-vault add`
 """.strip()
