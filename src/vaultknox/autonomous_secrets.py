@@ -19,6 +19,7 @@ Versioned format:
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import secrets
@@ -353,33 +354,40 @@ class AutonomousSecretsStore:
             ) from exc
 
     def _migrate_v1_to_v2(self, raw: bytes) -> dict[str, str]:
-        """Migrate v1 (Fernet) store to v2 (AES-256-GCM)."""
+        """Migrate v1 (Fernet) store to v2 (AES-256-GCM).
+
+        Crash safety: only the store file is rewritten here. The existing key
+        file bytes become the v2 HKDF input, so an interruption can never
+        leave a key file that no longer matches the store. (The original
+        design rewrote the key file first; a crash in between permanently
+        bricked the pair, since neither key could decrypt the v1 store.)
+        """
         key = self._load_key()
-        # For v1, the key file contains a Fernet key
-        # We need to use it to decrypt, then re-encrypt with v2 format
-        try:
-            fernet = Fernet(key)
-            plaintext = fernet.decrypt(raw)
-            secrets = json.loads(plaintext.decode("utf-8"))
-        except Exception as exc:
+        # v1 stores were Fernet-encrypted. The key file normally holds the
+        # Fernet key exactly as the v1 code wrote it; also tolerate raw key
+        # material as a best-effort recovery for foreign layouts.
+        plaintext: bytes | None = None
+        last_error: Exception | None = None
+        for candidate in (key, base64.urlsafe_b64encode(key)):
+            try:
+                plaintext = Fernet(candidate).decrypt(raw)
+                break
+            except Exception as exc:  # ValueError (bad key) / InvalidToken
+                last_error = exc
+        if plaintext is None:
             raise AutonomousSecretsError(
-                f"Failed to decrypt v1 secrets store: {exc}. "
+                f"Failed to decrypt v1 secrets store: {last_error}. "
                 "The key file may be corrupted."
-            ) from exc
+            )
 
-        # Re-encrypt with v2 format using the same key material
-        # Derive a new 32-byte key from the Fernet key for v2
-        hkdf = HKDF(algorithm=hashes.SHA256(), length=KEY_SIZE, salt=None, info=b"vaultknox-autonomous-v2-migration")
-        v2_key = hkdf.derive(key)
+        secrets_map: dict[str, str] = json.loads(plaintext.decode("utf-8"))
 
-        # Write new key file with v2 key
-        write_private_file(self._key_path, v2_key)
-
-        # Encrypt and write v2 store
-        encrypted = self._encrypt_v2(v2_key, secrets)
+        # Re-encrypt in v2 format using the current key file bytes as the
+        # HKDF input; the key file itself is left untouched (single write).
+        encrypted = self._encrypt_v2(key, secrets_map)
         write_private_file(self._secrets_path, encrypted)
 
-        return secrets
+        return secrets_map
 
     def _encrypt(self, secrets: dict[str, str]) -> None:
         """Encrypt secrets using current version (v2)."""

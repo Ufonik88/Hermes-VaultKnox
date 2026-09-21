@@ -284,8 +284,9 @@ class VaultKnox:
             return failed_payload
 
     def get_masked(self, password: str | None, secret_id: str, purpose: str | None = None, token_ttl_seconds: int = DEFAULT_TOKEN_TTL_SECONDS) -> dict[str, Any]:
+        if password is None:
+            self._require_unlocked()
         key = self._session_entry_key() if password is None else self._entry_key(password)
-        self._require_unlocked()
         row = self.db.get_secret_row(secret_id)
         expires_at = row["expires_at"] if "expires_at" in row.keys() else None
         if expires_at and _parse_utc_datetime(expires_at) <= datetime.now(timezone.utc):

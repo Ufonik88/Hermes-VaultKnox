@@ -10,16 +10,17 @@ import click
 from vaultknox.autonomous_secrets import AutonomousSecretsStore
 from vaultknox.branding import get_logo_asset_path, get_logo_banner
 from vaultknox.config import expand_runtime_path
+from vaultknox.exceptions import AutonomousSecretsError
 from vaultknox.vault import VaultError, VaultKnox
 
 
 class _VaultGroup(click.Group):
-    """Click group that converts VaultError and ValueError into clean ClickException messages."""
+    """Click group that converts VaultError, ValueError, and store errors into clean ClickException messages."""
 
     def invoke(self, ctx: click.Context) -> object:
         try:
             return super().invoke(ctx)
-        except (VaultError, ValueError) as exc:
+        except (VaultError, ValueError, AutonomousSecretsError) as exc:
             raise click.ClickException(str(exc)) from exc
 
 
@@ -264,7 +265,7 @@ def update(obj: dict[str, VaultKnox], secret_id: str, secret_type: str, label: s
 @click.pass_obj
 def get(obj: dict[str, VaultKnox], secret_id: str, mask: bool, purpose: str | None) -> None:
     vault = obj["vault"]
-    result = vault.get_masked(secret_id, purpose=purpose) if mask else vault.get_secret(_prompt_password(), secret_id)
+    result = vault.get_masked(_prompt_password(), secret_id, purpose=purpose) if mask else vault.get_secret(_prompt_password(), secret_id)
     click.echo(json.dumps(result, indent=2))
 
 
@@ -698,7 +699,7 @@ def health(obj: dict[str, VaultKnox], output_format: str) -> None:
 
     for check in report.checks:
         sev_icon = {
-            CheckSeverity.CRITICAL: "🔴",
+            CheckSeverity.ERROR: "🔴",
             CheckSeverity.WARNING: "⚠️ ",
             CheckSeverity.INFO: "ℹ️ ",
         }.get(check.severity, "?")

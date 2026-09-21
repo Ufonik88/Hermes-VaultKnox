@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `vaultknox` tool — vault operations (masked reads, one-time tokens, secret scanning); exposed automatically when the `vaultknox` package is importable.
 - **`hermes-vault install-hooks` now deploys the packaged plugin** to `~/.hermes/plugins/vaultknox/` (previously it generated a plugin copy inline). It reports superseded `vaultknox-secret-guard` plugin and legacy hook directories but never deletes them.
 - **Plugin contract and sync test suites.** `tests/test_hermes_plugin.py` pins the plugin to the current Hermes hook payload/return shapes; `tests/test_hermes_plugin_sync.py` proves the plugin loads standalone (with the package unavailable) and keeps the vendored copies byte-equal to the package originals.
+- **Autonomous store tests** (`tests/test_autonomous_secrets.py`): v1→v2 migration round-trip, raw-key recovery, interrupted-state clean failure, and the v2 set/get/list/delete lifecycle.
 
 ### Fixed
 
@@ -23,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`vaultknox-onboard` plugin.** Removed the dead `pre_gateway_dispatch` hook (`onboard_repo` is not a supported gateway action) and repaired the invalid `plugin.yaml` (a stray docstring line made it unparseable).
 - **Guidance standardized on the shipped CLI.** The system-prompt snippet, outbound rewrite, and trigger actions now reference `hermes-vault add ...` instead of `vault-add-key`, which was never part of the public install.
 - **GCP private-key detector no longer trips secret scanners on its own definition** — the header literal is assembled from adjacent strings.
+- **`hermes-vault get --mask` crashed with a `TypeError`** — the CLI passed the secret id where the password argument belongs. The password is now prompted and forwarded correctly, and the redundant locked-session check that blocked password-based masked reads (the unmasked path never had it) was removed.
+- **`hermes-vault health` crashed while rendering its report** — it referenced a non-existent `CheckSeverity.CRITICAL` member instead of `CheckSeverity.ERROR`.
+- **Autonomous secrets store migration is now crash-safe.** The v1→v2 migration rewrote the key file *before* the store file; an interruption in between left a key file that could no longer decrypt the store, permanently breaking reads. The migration now rewrites only the store file and keeps the key file bytes as the v2 HKDF input. Store errors surface as clean CLI messages instead of raw tracebacks.
 
 ### Verification
 
