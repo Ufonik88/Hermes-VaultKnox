@@ -2,20 +2,20 @@
 
 ![VaultKnox Logo](https://raw.githubusercontent.com/Ufonik88/Hermes-VaultKnox/main/src/vaultknox/assets/vaultknox-logo.png)
 
-VaultKnox is an encrypted secrets vault for Hermes Agent. It stores sensitive data locally, returns masked references and short-lived tokens to the agent, and ships a self-contained Hermes plugin that redacts secrets from chat before they reach session storage.
+VaultKnox is an encrypted secrets vault for Hermes Agent. It stores sensitive data locally, returns masked references and short-lived tokens to the agent, and ships a self-contained Hermes plugin that redacts secrets from chat in both directions: inbound messages before they reach session storage, outbound replies before they reach the user.
 
 ## Documentation Map
 
 | Topic | Where |
 |---|---|
-| Plugin install, hooks, verification, troubleshooting | [docs/AGENT_INTEGRATION.md](docs/AGENT_INTEGRATION.md) |
+| Hook contracts, tool schema, safe storage and retrieval patterns | [docs/AGENT_INTEGRATION.md](docs/AGENT_INTEGRATION.md) |
 | Plugin install, verification, and operator checklist | [docs/PLUGIN.md](docs/PLUGIN.md) |
 | Hermes write-gate operations (production guide) | [docs/hermes-write-gate-operations.md](docs/hermes-write-gate-operations.md) |
 | Per-version change log | [CHANGELOG.md](CHANGELOG.md) |
 
 ## Status
 
-VaultKnox v0.8.2 is in **alpha** (Development Status :: 3 - Alpha).
+VaultKnox v0.8.3 is in **alpha** (Development Status :: 3 - Alpha).
 
 - Intended use: local development and operator-managed Hermes environments.
 - Review the threat model before deploying in high-risk environments.
@@ -44,7 +44,7 @@ hermes-vault add --id OPENAI_API_KEY --type api_key \
 hermes-vault unlock
 hermes-vault get OPENAI_API_KEY --mask --purpose "demo request"
 
-# Deploy the secret-guard plugin into Hermes
+# Deploy the VaultKnox plugin into Hermes
 hermes-vault install-hooks
 # Then enable in ~/.hermes/config.yaml:
 #   plugins:
@@ -62,7 +62,7 @@ VaultKnox uses a layered cryptographic design to isolate each operation:
 | Layer | Technology | Purpose |
 |---|---|---|
 | Key Derivation | Argon2id | Derives the master key from the master password. Memory-hard, side-channel resistant. |
-| Key Separation | HKDF-SHA256 | Derives scoped sub-keys from the master key — one per operation type (entry encryption, backup signing, token generation). |
+| Key Separation | HKDF-SHA256 | Derives scoped sub-keys from the master key — one per operation type (entry encryption, metadata encryption, search tokens, backup signing). |
 | Encryption | AES-256-GCM | Authenticated encryption. Each secret gets a unique random nonce; the tag guarantees integrity. |
 | Nonce Generation | `secrets.token_bytes(12)` | Cryptographically secure random nonces — no two secrets share the same nonce. |
 
@@ -73,7 +73,9 @@ master_key
   ├── vaultknox-entry          → encrypts/decrypts individual secrets
   ├── vaultknox-verifier       → password correctness check
   ├── vaultknox-backup         → encrypts vault exports
-  └── vaultknox-pre-rotation   → encrypts pre-rotation backups (v0.3.0)
+  ├── vaultknox-pre-rotation   → encrypts pre-rotation backups (v0.3.0)
+  ├── vaultknox-metadata       → encrypts secret metadata (v0.7.0)
+  └── vaultknox-search         → deterministic search tokens (v0.7.0)
 ```
 
 Compromise of any sub-key does not expose the master key or any other sub-key's output.
@@ -87,7 +89,8 @@ Compromise of any sub-key does not expose the master key or any other sub-key's 
 - Backup export and import with integrity signing
 - Audit logging with owner-only permissions and rotation
 - Hermes integration wrapper with write actions disabled by default
-- **v0.8.2** — `inject_env` is gated by `allow_write` in code, matching what the README table, integration guide, write-gate guide and plugin tool schema already claimed. README safety rule 1 now states the two deliberate plaintext routes (`consume_token` under an authorising policy, `inject_env`) instead of an unconditional "never sees plaintext".
+- **v0.8.3** — Technical-writing pass over the README and all three docs, 23 amendments checked against code: the Hermes action table listed actions `vault_tool` rejects and omitted one it supports, five detectors were graded against the wrong severity, the cron snippet pointed at a script the package does not ship, `scan_text` findings were described as logged when the log line carries only counts and detector names, and the capability probe was described as per-dispatch when Hermes caches it for 30 seconds. Tool schema and docstrings now name `consume_token` as the one read action that returns plaintext, and call the fingerprint unsalted.
+- **v0.8.2** — `inject_env` is gated by `allow_write` in code, matching what this README (action table and plugin tool row), the integration guide, the write-gate guide and the plugin tool schema already claimed. README safety rule 1 now states the two deliberate plaintext routes (`consume_token` under an authorising policy, `inject_env`) instead of an unconditional "never sees plaintext".
 - **v0.8.1** — Outbound replies now run the full 28-pattern value detector and redact matches to `[REDACTED-SENSITIVE-VALUE]`, closing the gap where the catalog entry and manifest advertised outbound value redaction that the code did not perform. Same release: docs state the raw `consume_token` policy caveat (a masked read never exposes plaintext; an operator policy that authorises `consume_token` returns the plaintext into model context by design).
 - **v0.8.0** — Catalog-ready Hermes plugin shipped inside the package at `src/vaultknox/_hermes_plugin/`. `hermes-vault install-hooks` deploys it to `~/.hermes/plugins/vaultknox/`. Three hooks (`pre_gateway_dispatch`, `pre_llm_call`, `transform_llm_output`) plus the `vaultknox` tool, gated by package import. Hook contracts fixed so inbound redaction is live again on current Hermes.
 - **v0.8.0** — Detector registry expanded to **28 patterns** (added Google API key, GCP key material, Azure connection string, JWT, high-entropy assignment, etc., across earlier security work).
@@ -210,6 +213,7 @@ The `encrypted-secrets/` directory contains:
 - `master.key` — autonomous store key (v2 AES-256-GCM, chmod 600, never in logs)
 - `secrets.enc` — encrypted JSON blob (safe for backups/git)
 
+The `vaultknox/` directory contains:
 - `secrets.db`: encrypted SQLite vault database
 - `audit.log`: audit trail with rotation
 - `session.json`: session state metadata
@@ -234,8 +238,7 @@ The safest integration path is the `vault_tool` wrapper in `src/vaultknox/hermes
 | `add` | Add new secret | Yes |
 | `update` | Update existing secret | Yes |
 | `delete` | Remove secret | Yes |
-| `export` | Encrypted backup | No |
-| `import` | Restore from backup | No |
+| `revoke_token` | Revoke an outstanding one-time token | Yes |
 
 ### Safety Rules
 
@@ -243,7 +246,7 @@ The safest integration path is the `vault_tool` wrapper in `src/vaultknox/hermes
 2. Write actions (`add`, `update`, `delete`, `inject_env`, `revoke_token`) require `allow_write=True`.
 3. Tokens are single-use and expire by default after 300 seconds.
 4. Auto-lock applies after inactivity.
-5. Every access is logged without sensitive data.
+5. Every action that reaches the vault is written to the audit log without sensitive data; `scan_text` never touches the vault and is not audited.
 6. VaultKnox contents must never be written to memory, config, or session transcripts.
 
 Read the operator guidance in [docs/hermes-write-gate-operations.md](docs/hermes-write-gate-operations.md) before enabling write access for Hermes.
@@ -358,7 +361,7 @@ hermes-secrets populate --from ~/.hermes/.env
 Simply add one line at the top of the cron prompt:
 
 ```
-eval $(python3 ~/.hermes/encrypted-secrets/secrets_manager.py env)
+eval "$(hermes-secrets env --shell)"
 ```
 
 Then use the API keys as environment variables as before.
@@ -424,7 +427,7 @@ hermes-vault secrets list
 hermes-vault secrets env --shell
 ```
 
-## Hermes Plugin (v0.8.2)
+## Hermes Plugin (v0.8.3)
 
 The package ships a catalog-ready plugin at `src/vaultknox/_hermes_plugin/`. When deployed by `hermes-vault install-hooks`, the plugin copies three files (`__init__.py`, `detectors.py`, `plugin.yaml`) into `~/.hermes/plugins/vaultknox/` and the operator enables it once in Hermes config. No global Python paths or compile step.
 
@@ -482,9 +485,9 @@ VaultKnox ships with 28 regex-based detectors covering the most common secret ty
 
 | Category | Detectors |
 |---|---|
-| **Critical** | OpenAI API Key, GitHub PAT (classic, fine-grained, OAuth, impersonation, refresh), Anthropic API Key, AWS Access Key ID, AWS Secret Access Key, Slack Token, Stripe Secret Key, Twilio API Key, SendGrid API Key, NPM Access Token, RSA/DSA/EC Private Keys |
-| **High** | Generic API Key Pattern, Generic Secret Key Pattern, Generic Access Token Pattern, Generic Auth Token Pattern, Generic Secret Variable Pattern, Bearer Token, Google API Key, JWT |
-| **Medium** | Generic Password Pattern in Config, Stripe Publishable Key, GCP key material, Azure connection string, high-entropy assignment |
+| **Critical** | OpenAI API Key, GitHub PAT (classic, fine-grained, OAuth, impersonation, refresh), Anthropic API Key, AWS Access Key ID, AWS Secret Access Key, Slack Token, Stripe Secret Key, Twilio API Key, SendGrid API Key, NPM Access Token, RSA/DSA/EC/OPENSSH/PGP private keys, Google API Key, GCP service-account private key, Azure storage connection string |
+| **High** | Generic API Key Pattern, Generic Secret Key Pattern, Generic Access Token Pattern, Generic Auth Token Pattern, Generic Secret Pattern, Bearer Token, JWT, High Entropy Secret Assignment |
+| **Medium** | Generic Password Pattern in Config, Stripe Publishable Key |
 
 All patterns live in `src/vaultknox/detectors.py`. Adding a new detector is a single `_register()` call; the plugin's vendored copy stays byte-equal automatically through the sync test in `tests/test_hermes_plugin_sync.py`.
 
@@ -496,7 +499,7 @@ Hermes can scan arbitrary text for secrets at runtime using the `vaultknox` tool
 vaultknox(action="scan_text", text="Here is my key: sk-abc123...")
 ```
 
-Returns a structured list of findings with detector name, severity, SHA-256 fingerprint, and character span. The matched value is never returned; sanitize user input before logging it.
+Returns a structured list of findings with detector name, severity, unsalted SHA-256 fingerprint, and character span. The matched value is never returned; the fingerprint is unsalted, so it identifies a value that already appeared but does not hide a guessable one — sanitize user input before logging it.
 
 ### File Scanning
 
@@ -612,7 +615,7 @@ rejected.
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for the complete version history, including the v0.8.2 write-gate fix and the v0.8.1 outbound-redaction release and v0.7.2 Onboard release.
+See [CHANGELOG.md](CHANGELOG.md) for the complete version history, including the v0.8.3 documentation pass, the v0.8.2 write-gate fix, the v0.8.1 outbound-redaction release, and the v0.7.2 Onboard release.
 
 ## Release Guidance
 

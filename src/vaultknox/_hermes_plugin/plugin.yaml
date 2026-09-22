@@ -13,7 +13,7 @@ description: |
   action for the agent, whose handler returns the plaintext by design.
   Registers the vaultknox tool when the vaultknox package is installed.
   Zero dependencies; all detection is local.
-version: 0.8.2
+version: 0.8.3
 author: Ufonik / VaultKnox
 kind: standalone
 license: Apache-2.0

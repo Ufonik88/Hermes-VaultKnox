@@ -140,7 +140,13 @@ When interacting with users about credentials or API keys:
 
 
 def _fingerprint(value: str) -> str:
-    """SHA-256 fingerprint of a matched value — safe to log, never the raw secret."""
+    """Unsalted SHA-256 fingerprint of a matched value — safe to log, never the raw secret.
+
+    Unsalted on purpose: it only has to prove "this exact value appeared", so
+    it must be reproducible. It does NOT hide a low-entropy match (a password
+    pattern is dictionary-recoverable from the digest), so treat it as an
+    identifier, not as anonymisation.
+    """
     return hashlib.sha256(value.encode("utf-8"), usedforsecurity=True).hexdigest()
 
 
@@ -161,8 +167,9 @@ def _merge_spans(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
 def _scan_and_redact(text: str) -> tuple[str, list[dict[str, Any]]]:
     """Scan text for secrets; return (redacted_text, findings).
 
-    Findings carry detector name, severity, span, and a SHA-256 fingerprint —
-    never the raw matched value.
+    Findings carry detector name, severity, span, and an unsalted SHA-256
+    fingerprint — never the raw matched value. The unsalted digest identifies
+    a value that already appeared; it does not hide a guessable one.
     """
     findings: list[dict[str, Any]] = []
     for detector in DETECTORS:
@@ -318,8 +325,10 @@ _VAULTKNOX_TOOL_SCHEMA = {
     "description": (
         "Encrypted secrets vault operations (VaultKnox). Read actions return masked "
         "references or issue short-lived single-use tokens without exposing plaintext "
-        "to the model; write actions require allow_write=true. The vault must be "
-        "unlocked by the operator; the session key is used automatically."
+        "to the model, with one deliberate exception: consume_token exchanges a "
+        "one-time token for the plaintext value and only runs when the operator's "
+        "vault policy grants raw secret access. Write actions require allow_write=true. "
+        "The vault must be unlocked by the operator; the session key is used automatically."
     ),
     "parameters": {
         "type": "object",

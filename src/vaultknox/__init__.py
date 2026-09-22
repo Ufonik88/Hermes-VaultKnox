@@ -13,7 +13,7 @@ from vaultknox.scanner import SecretScanner
 from vaultknox.vault import VaultKnox
 from vaultknox.verifier import CredentialVerifier
 
-__version__ = "0.8.2"
+__version__ = "0.8.3"
 
 __all__ = [
     "VaultKnox",

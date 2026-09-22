@@ -5,12 +5,39 @@ All notable changes to VaultKnox are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.3] — 2026-09-22
+
+### Documentation accuracy pass
+
+A line-by-line technical-writing review of `README.md`, `docs/PLUGIN.md`, `docs/AGENT_INTEGRATION.md`, `docs/hermes-write-gate-operations.md` and `CHANGELOG.md` against the code. 23 amendments; each was checked against a specific line before it was kept:
+
+- **The Hermes action table listed `export` and `import`, which `vault_tool` rejects**, and omitted `revoke_token`, which it supports. The table now matches `READ_ACTIONS | WRITE_ACTIONS | scan_text`.
+- **The detector table mis-graded five detectors.** Google API Key, the GCP service-account private key and the Azure storage connection string are `critical`, not high/medium; the high-entropy assignment is `high`, not medium; the detector is named `Generic Secret Pattern`; the private-key pattern also matches OPENSSH and PGP headers. The three rows now sum to exactly 28.
+- **The cron snippet called `python3 ~/.hermes/encrypted-secrets/secrets_manager.py env`**, a script that is not part of the package. Replaced with `eval "$(hermes-secrets env --shell)"`, the shipped entry point (`secrets_env`, `--shell` in `cli.py`), matching the identical snippet a dozen lines above it.
+- **`scan_text` findings were described as "logged"; the hook's log line carries only the count and the detector names.** Fingerprints live in returned finding objects. Corrected.
+- **The fingerprint is unsalted SHA-256**, and the plugin docstring called it "safe to log" without qualification. Docs and docstrings now say unsalted and say what it does not hide.
+- **Safety rule 5 ("every access is logged") over-reached**: `scan_text` returns before the audit write.
+- **The tool schema claimed read actions never expose plaintext while listing `consume_token` as a read action.** It now names `consume_token` as the deliberate exception.
+- Also corrected: the sub-key tree omitted the v0.7.0 `vaultknox-metadata` and `vaultknox-search` sub-keys; the HKDF row claimed a "token generation" sub-key that does not exist (tokens come from `generate_token`); the capability probe was described as running at every tool dispatch when Hermes caches it for about 30 seconds; the `consume_token` "out-of-band" example pointed at the agent tool call that the next paragraph says puts plaintext into model context, so it now points at `hermes-vault consume-token`; the write-gate guide's allowed-by-default list now carries its `consume_token` and `unlock` conditions; plus duplicate numbering, a duplicated documentation-map row, a run-on changelog pointer, and stale runtime-directory labels.
+
+### Verification
+
+- `PYTHONPATH=src python3 -m pytest tests/ -q` → **387 passed** (documentation, tool-description and docstring text only: no behaviour change, no new tests).
+- `ruff check src tests` → clean. `hermes plugins validate src/vaultknox/_hermes_plugin` → 13/13.
+- The `[0.8.2]` Verification section below was backfilled in this release from the run actually taken at that commit.
+
 ## [0.8.2] — 2026-09-22
 
 ### Fixed
 
 - **`inject_env` is now gated by `allow_write`.** The action writes decrypted plaintext into the process environment, and five documents (README action table, README tool row, integration guide table, write-gate guide, plugin tool schema) already advertised it as write-gated, but `hermes_tool.py` classified it in `READ_ACTIONS`, so the agent tool path ran it ungated. It moved to `WRITE_ACTIONS`. The operator CLI path (`hermes-vault inject-env`, which prompts for the master password itself) and the MCP server are unaffected; only the Hermes tool wrapper now requires the flag it always advertised.
 - **README safety rule 1 stated "Hermes never sees plaintext secrets" without qualification.** It now names the two deliberate routes by which plaintext does reach the model: an operator policy that authorises raw `consume_token`, and `inject_env`. Reads through `get_masked`/`list`/`get_token` remain plaintext-free.
+
+### Verification
+
+- `PYTHONPATH=src python3 -m pytest tests/ -q` → **387 passed** (0.8.1 baseline: 386 passed; this release added 1 write-gate test and removed none).
+- The new `test_hermes_wrapper_gates_inject_env` fails on 0.8.1 with `DID NOT RAISE VaultError` and passes here.
+- `ruff check src tests` → clean. `hermes plugins validate src/vaultknox/_hermes_plugin` → 13/13, including the security scan, and again from a fresh clone checked out at the release commit.
 
 ## [0.8.1] — 2026-09-22
 
@@ -31,7 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Verification
 
-- `PYTHONPATH=src python -m pytest tests/ -q` → **372 passed** (0.8.0 baseline: 372 passed)
+- `PYTHONPATH=src python -m pytest tests/ -q` → **386 passed** (0.8.0 baseline: 372 passed; this release added 14 outbound-redaction tests and removed none)
 - New outbound-redaction contracts fail red against `899fd8a` (v0.8.0) and pass on this commit
 
 ## [0.8.0] — 2026-09-21

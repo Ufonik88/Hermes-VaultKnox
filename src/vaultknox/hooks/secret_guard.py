@@ -120,7 +120,7 @@ def _merge_spans(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
 def scan_and_redact(text: str) -> tuple[str, list[dict[str, Any]]]:
     """Scan text with the full detector registry; return (redacted, findings).
 
-    Findings carry the detector name, severity, span, and a SHA-256
+    Findings carry the detector name, severity, span, and an unsalted SHA-256
     fingerprint of the match — never the raw matched value.  Mirrors
     ``_scan_and_redact`` in the packaged Hermes plugin.
     """

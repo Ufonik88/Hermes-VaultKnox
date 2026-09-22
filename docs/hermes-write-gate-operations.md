@@ -4,14 +4,15 @@
 
 This guide defines how to run VaultKnox safely when Hermes Agent is integrated. The default stance is deny-by-default for writes so Hermes can read masked data and issue tokens without modifying stored secrets unless an operator explicitly allows it.
 
-The v0.8.2 plugin is the integration path; install it via `hermes-vault install-hooks` and enable it in `~/.hermes/config.yaml`. See [docs/AGENT_INTEGRATION.md](AGENT_INTEGRATION.md) and [docs/PLUGIN.md](PLUGIN.md) for install and verification steps.
+The v0.8.3 plugin is the integration path; install it via `hermes-vault install-hooks` and enable it in `~/.hermes/config.yaml`. See [docs/AGENT_INTEGRATION.md](AGENT_INTEGRATION.md) and [docs/PLUGIN.md](PLUGIN.md) for install and verification steps.
 
 ## Security Model
 
 - Default mode: Hermes write actions are blocked.
 - Allowed by default: status, lock, unlock, list, get_masked, get_token, consume_token, scan_text.
 - Blocked by default: add, update, delete, inject_env, revoke_token.
-- Elevation path: write actions require `allow_write=true` in the calling integration, and the master vault must be unlocked by an operator. Agent actions use the session-derived key (v0.7.0+) and never accept `master_password`.
+- Two read-path conditions on that list: `consume_token` is not write-gated, but it returns plaintext when the operator's vault policy grants raw secret access (default deny, `raw_secret_access: true` required); `unlock` is operator-only — it requires `master_password` and is not in the plugin tool schema.
+- Elevation path: write actions require `allow_write=true` in the calling integration, and the master vault must be unlocked by an operator. Agent actions use the session-derived key (v0.7.0+) and never accept `master_password`; only the operator `unlock` action takes it.
 
 ## Deployment Defaults
 
@@ -33,7 +34,7 @@ The v0.8.2 plugin is the integration path; install it via `hermes-vault install-
 2. Enable write gate only for the required integration process.
 3. Perform the minimum needed write operations.
 4. Disable write gate immediately after completion.
-5. Review audit events for add, update, and delete actions.
+5. Review audit events for the write actions used (add, update, delete, inject_env, revoke_token).
 
 ## Suggested Integration Guardrails
 
