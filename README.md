@@ -15,7 +15,7 @@ VaultKnox is an encrypted secrets vault for Hermes Agent. It stores sensitive da
 
 ## Status
 
-VaultKnox v0.8.0 is in **alpha** (Development Status :: 3 - Alpha).
+VaultKnox v0.8.1 is in **alpha** (Development Status :: 3 - Alpha).
 
 - Intended use: local development and operator-managed Hermes environments.
 - Review the threat model before deploying in high-risk environments.
@@ -87,6 +87,7 @@ Compromise of any sub-key does not expose the master key or any other sub-key's 
 - Backup export and import with integrity signing
 - Audit logging with owner-only permissions and rotation
 - Hermes integration wrapper with write actions disabled by default
+- **v0.8.1** — Outbound replies now run the full 28-pattern value detector and redact matches to `[REDACTED-SENSITIVE-VALUE]`, closing the gap where the catalog entry and manifest advertised outbound value redaction that the code did not perform. Same release: docs state the raw `consume_token` policy caveat (a masked read never exposes plaintext; an operator policy that authorises `consume_token` returns the plaintext into model context by design).
 - **v0.8.0** — Catalog-ready Hermes plugin shipped inside the package at `src/vaultknox/_hermes_plugin/`. `hermes-vault install-hooks` deploys it to `~/.hermes/plugins/vaultknox/`. Three hooks (`pre_gateway_dispatch`, `pre_llm_call`, `transform_llm_output`) plus the `vaultknox` tool, gated by package import. Hook contracts fixed so inbound redaction is live again on current Hermes.
 - **v0.8.0** — Detector registry expanded to **28 patterns** (added Google API key, GCP key material, Azure connection string, JWT, high-entropy assignment, etc., across earlier security work).
 - **v0.8.0** — Standardized guidance on `hermes-vault add ... --data ...` (the shipped CLI); old `vault-add-key` references removed.
@@ -422,7 +423,7 @@ hermes-vault secrets list
 hermes-vault secrets env --shell
 ```
 
-## Hermes Plugin (v0.8.0)
+## Hermes Plugin (v0.8.1)
 
 The package ships a catalog-ready plugin at `src/vaultknox/_hermes_plugin/`. When deployed by `hermes-vault install-hooks`, the plugin copies three files (`__init__.py`, `detectors.py`, `plugin.yaml`) into `~/.hermes/plugins/vaultknox/` and the operator enables it once in Hermes config. No global Python paths or compile step.
 
@@ -432,10 +433,10 @@ The package ships a catalog-ready plugin at `src/vaultknox/_hermes_plugin/`. Whe
 |---|---|---|
 | Hook `pre_gateway_dispatch` | Inbound | Reads `event.text`, runs the 28-detector registry, and returns `{"action": "rewrite", "text": "<notice + redacted message>"}` when secrets are found. Fires before persistence, so redacted content never reaches session storage. |
 | Hook `pre_llm_call` | Per LLM turn | Injects the secret-handling rules from `vaultknox.agent_guide.prompts.get_system_prompt_snippet()` once per conversation as `{"context": ...}`. |
-| Hook `transform_llm_output` | Outbound | Scans assistant responses for phrases that ask the user to share a secret (e.g. "drop your api key") and rewrites them with safe CLI guidance. Returns the replacement string. |
+| Hook `transform_llm_output` | Outbound | Runs the 28-detector registry over the assistant response and redacts secret values to `[REDACTED-SENSITIVE-VALUE]`, then rewrites phrases that ask the user to share a secret (e.g. "drop your api key") with safe CLI guidance. Returns the replacement string, or `None` when nothing matched. |
 | Tool `vaultknox` | Agent-callable | Vault operations: `status`, `list`, `get_masked`, `get_token`, `consume_token`, `scan_text`, plus write actions (`add`, `update`, `delete`, `inject_env`, `revoke_token`) gated by `allow_write=True`. Registered only when the `vaultknox` package is importable (check_fn probe). |
 
-The plugin manifest is `src/vaultknox/_hermes_plugin/plugin.yaml`. Hook contracts target Hermes >=0.19; the inbound-redaction payload/return shape is the one consumed by current Hermes, so protection is live again after v0.8.0.
+The plugin manifest is `src/vaultknox/_hermes_plugin/plugin.yaml`. Hook contracts target Hermes >=0.19; the inbound-redaction payload/return shape is the one consumed by current Hermes, so protection is live again since v0.8.0, and outbound replies run the value detector as of v0.8.1.
 
 ### Install
 
@@ -610,7 +611,7 @@ rejected.
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for the complete version history, including the v0.8.0 plugin release and v0.7.2 Onboard release.
+See [CHANGELOG.md](CHANGELOG.md) for the complete version history, including the v0.8.1 outbound-redaction release and v0.7.2 Onboard release.
 
 ## Release Guidance
 

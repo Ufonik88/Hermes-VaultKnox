@@ -15,9 +15,11 @@ leaks. It registers three hooks and one (conditionally available) tool:
     real-world leak path).
 
 ``transform_llm_output``
-    Scans OUTBOUND assistant responses for phrases that ask the user to
-    share a secret and rewrites them with safe CLI guidance before
-    delivery.
+    Scans OUTBOUND assistant responses with the same 28-pattern VALUE
+    detector registry used inbound and redacts any API key, token, or
+    password found there (so a secret echoed by the model never reaches
+    the user), then rewrites phrases that ask the user to share a secret
+    with safe CLI guidance before delivery.
 
 ``vaultknox`` (tool, when the vaultknox package is importable)
     Read-only-first vault operations: masked references, one-time tokens,
@@ -267,21 +269,44 @@ def on_pre_llm_call(session_id: str = "", user_message: str = "", conversation_h
 # ---------------------------------------------------------------------------
 
 def on_transform_llm_output(response_text: str = "", **kwargs: Any) -> str | None:
-    """Rewrite assistant responses that ask the user to share secrets.
+    """Redact secret values from, and rewrite secret requests in, assistant replies.
+
+    Two passes, in this order:
+
+    1. **Value redaction** — the 28-pattern detector registry (the same one
+       used on inbound messages) runs over the outgoing text, so an API key,
+       token, or password the model echoed back is replaced with
+       ``[REDACTED-SENSITIVE-VALUE]`` before the user sees it.
+    2. **Solicitation rewrite** — phrases that ask the user to share a secret
+       are replaced with safe CLI guidance. Matches are computed on the
+       *redacted* text so every span index stays valid.
 
     Hermes fires ``transform_llm_output`` after the tool loop; the first
-    hook returning a non-empty string replaces the response.
+    hook returning a non-empty string replaces the response. Returns
+    ``None`` when nothing matched, leaving the response untouched.
     """
     if not isinstance(response_text, str) or not response_text:
         return None
-    matches = _scan_outbound(response_text)
+
+    redacted, findings = _scan_and_redact(response_text)
+    if findings:
+        logger.info(
+            "VaultKnox secret-guard: outbound — redacted %d secret value(s) (%s)",
+            len(findings),
+            ", ".join(sorted({str(f["detector"]) for f in findings})),
+        )
+
+    matches = _scan_outbound(redacted)
     if not matches:
-        return None
+        if not findings:
+            return None
+        return redacted
+
     logger.info(
         "VaultKnox secret-guard: outbound — rewrote %d secret-requesting phrase(s)",
         len(matches),
     )
-    return _rewrite_outbound(response_text, matches)
+    return _rewrite_outbound(redacted, matches)
 
 
 # ---------------------------------------------------------------------------

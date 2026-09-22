@@ -14,10 +14,14 @@ Supports three event types:
     500 chars by the emitter).  Defense-in-depth for CLI / non-gateway
     paths where ``message:received`` may not fire.
 
-Outbound scanning (v0.4.2)
-    ``scan_outbound(text)`` scans AI responses for phrases that ask
-    users to paste secrets in chat.  ``rewrite_outbound(text, matches)``
-    replaces those phrases with safe guidance.
+Outbound scanning (v0.4.2, extended in v0.8.1)
+    ``scan_and_redact(text)`` runs the full 28-pattern detector registry
+    over arbitrary text and returns ``(redacted_text, findings)``.
+    ``scan_outbound(text)`` scans AI responses for phrases that ask users
+    to paste secrets in chat, and ``rewrite_outbound(text, matches)``
+    replaces those phrases with safe guidance.  ``transform_outbound(text)``
+    is the complete outbound pass: redact secret VALUES first, then rewrite
+    solicitation phrases on the redacted text.
 """
 
 from __future__ import annotations
@@ -99,20 +103,31 @@ def rewrite_outbound(text: str, matches: list[re.Match[str]]) -> str:
     return result
 
 
-# ---------------------------------------------------------------------------
-# Inbound hook handler
-# ---------------------------------------------------------------------------
+def _merge_spans(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Merge overlapping/nested spans so multi-detector matches redact cleanly."""
+    if not spans:
+        return []
+    ordered = sorted(spans, key=lambda s: s[0])
+    merged = [ordered[0]]
+    for start, end in ordered[1:]:
+        if start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
 
 
-def handle(event_type: str, context: dict[str, Any]) -> None:
-    """Scan incoming message content for secrets and redact them in-place."""
-    # Resolve the text to scan based on event type
-    text = _resolve_content(event_type, context)
+def scan_and_redact(text: str) -> tuple[str, list[dict[str, Any]]]:
+    """Scan text with the full detector registry; return (redacted, findings).
+
+    Findings carry the detector name, severity, span, and a SHA-256
+    fingerprint of the match — never the raw matched value.  Mirrors
+    ``_scan_and_redact`` in the packaged Hermes plugin.
+    """
     if not text or not isinstance(text, str):
-        return
+        return text if isinstance(text, str) else "", []
 
     findings: list[dict[str, Any]] = []
-
     for detector in DETECTORS:
         for match in detector.pattern.finditer(text):
             secret_value = match.group(0)
@@ -126,22 +141,52 @@ def handle(event_type: str, context: dict[str, Any]) -> None:
             )
 
     if not findings:
-        return
-
-    # Merge overlapping/nested spans to avoid corruption during redaction
-    spans = sorted([f["span"] for f in findings], key=lambda s: s[0])
-    merged = []
-    for start, end in spans:
-        if merged and start <= merged[-1][1]:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
-        else:
-            merged.append((start, end))
+        return text, []
 
     # Redact in-place, sorting reverse-order so span replacements don't
     # shift the indices of earlier matches.
     redacted = text
-    for start, end in reversed(merged):
+    for start, end in reversed(_merge_spans([f["span"] for f in findings])):
         redacted = redacted[:start] + _REDACT_REPLACEMENT + redacted[end:]
+
+    return redacted, findings
+
+
+def transform_outbound(text: str) -> str | None:
+    """Redact secret values from, and rewrite secret requests in, agent output.
+
+    Pass 1 replaces any API key, token, or password found by the detector
+    registry; pass 2 rewrites phrases that ask the user to share a secret.
+    Matches for pass 2 are computed on the *redacted* text so span indices
+    stay valid.  Returns ``None`` when neither pass changed anything.
+    """
+    if not text or not isinstance(text, str):
+        return None
+
+    redacted, findings = scan_and_redact(text)
+
+    matches = scan_outbound(redacted)
+    if not matches:
+        return redacted if findings else None
+
+    return rewrite_outbound(redacted, matches)
+
+
+# ---------------------------------------------------------------------------
+# Inbound hook handler
+# ---------------------------------------------------------------------------
+
+
+def handle(event_type: str, context: dict[str, Any]) -> None:
+    """Scan incoming message content for secrets and redact them in-place."""
+    # Resolve the text to scan based on event type
+    text = _resolve_content(event_type, context)
+    if not text or not isinstance(text, str):
+        return
+
+    redacted, findings = scan_and_redact(text)
+    if not findings:
+        return
 
     # Write back to the correct context key
     _write_content(context, event_type, redacted)

@@ -1,16 +1,21 @@
 # Agent Integration Guide
 
-This document explains how VaultKnox v0.8.0 integrates with Hermes Agent. It documents the catalog-ready plugin shipped with the package, the three hook contracts it registers, and safe storage and retrieval patterns for agent developers.
+This document explains how VaultKnox v0.8.1 integrates with Hermes Agent. It documents the catalog-ready plugin shipped with the package, the three hook contracts it registers, and safe storage and retrieval patterns for agent developers.
 
 ## What VaultKnox Does
 
-VaultKnox is an encrypted secrets vault for AI agents. It ensures API keys and credentials never appear in chat logs, session history, or agent context windows. The v0.8.0 plugin redacts inbound messages, injects safe-handling rules, and rewrites outbound assistant responses that ask the user to share a secret.
+VaultKnox is an encrypted secrets vault for AI agents. Its plugin redacts secret values from both directions: inbound messages are scanned before persistence, and outbound assistant replies are scanned before the user sees them. Both passes run the same 28-pattern detector registry and replace matches with `[REDACTED-SENSITIVE-VALUE]`; outbound replies additionally have phrases that ask the user to share a secret rewritten with safe CLI guidance.
 
-## The Plugin (v0.8.0)
+Scope of that guarantee, stated precisely:
+
+- **Chat text** (inbound and outbound) is protected for secret values that match a detector pattern. Detection is regex-based, so a credential in a shape no detector covers is not caught.
+- **Vault reads** return masked references (`get_masked`, `list`) or single-use tokens (`get_token`), so no plaintext reaches the agent's context window — with one deliberate exception: if the operator's vault policy authorises the raw `consume_token` action for the agent, that handler *does* return the plaintext value into model context. Use it only when a downstream caller cannot consume the token out-of-band.
+
+## The Plugin (v0.8.1)
 
 The VaultKnox package now ships a self-contained plugin at `src/vaultknox/_hermes_plugin/`. `hermes-vault install-hooks` copies three files (`__init__.py`, `detectors.py`, `plugin.yaml`) into `~/.hermes/plugins/vaultknox/` and the operator enables it once in Hermes config.
 
-The legacy `vaultknox-secret-guard` plugin directory and the `~/.hermes/hooks/secret-guard/` gateway hook are superseded. Current Hermes does not consume hook-event write-backs, so the legacy gateway hook was a no-op; the v0.8.0 plugin replaces both. `install-hooks` reports the superseded directories when present and never deletes them.
+The legacy `vaultknox-secret-guard` plugin directory and the `~/.hermes/hooks/secret-guard/` gateway hook are superseded. Current Hermes does not consume hook-event write-backs, so the legacy gateway hook was a no-op; the v0.8.1 plugin replaces both. `install-hooks` reports the superseded directories when present and never deletes them.
 
 ## Hook Contracts
 
@@ -61,7 +66,14 @@ def on_transform_llm_output(response_text="", **kwargs):
     ...
 ```
 
-Scans the assistant text for outbound phrases that ask the user to share a secret (`drop your api key`, `paste your key`, `share your token`, etc.). When matched, returns the replacement string. Hermes treats the first non-empty return value from this hook as the new response.
+Runs two passes over the assistant text, in this order:
+
+1. **Secret-value redaction.** The same 28-pattern detector registry used on inbound messages is run over the outgoing text; every match is replaced with `[REDACTED-SENSITIVE-VALUE]`. A key, token, or password the model echoed back never reaches the user.
+2. **Solicitation rewrite.** Phrases that ask the user to share a secret (`drop your api key`, `paste your key`, `share your token`, etc.) are replaced with the safe `hermes-vault add ...` guidance. Matches for this pass are computed on the *redacted* text, so all span indices stay valid.
+
+When either pass changes something, returns the replacement string; Hermes treats the first non-empty return value from this hook as the new response. Returns `None` when nothing matched, so the response is delivered unchanged.
+
+Detection is regex-based: values that match no detector pattern pass through. Findings are logged as detector name + count with a SHA-256 fingerprint — the raw matched value is never logged.
 
 The previous `post_llm_call` hook name does not work on current Hermes: results from it are discarded. Do not register handlers under that name.
 
@@ -113,7 +125,8 @@ If `install-hooks` reports a superseded `vaultknox-secret-guard` plugin director
 
 1. Plugin deployed: `ls ~/.hermes/plugins/vaultknox/` shows the three files.
 2. Plugin enabled: `vaultknox` is listed under `plugins.enabled` in `~/.hermes/config.yaml`.
-3. Plugin live: send yourself a test message containing a known API key pattern. The reply should arrive prefixed with the Security Notice and the key replaced by `[REDACTED-SENSITIVE-VALUE]`. No secret should land in `~/.hermes/sessions/*.jsonl` for that turn.
+3. Plugin live (inbound): send yourself a test message containing a known API key pattern. The reply should arrive prefixed with the Security Notice and the key replaced by `[REDACTED-SENSITIVE-VALUE]`. No secret should land in `~/.hermes/sessions/*.jsonl` for that turn.
+4. Plugin live (outbound): ask the agent to repeat a credential-shaped string back to you (for example, paste a detector-matching dummy value into a file and ask it to echo the line). The delivered reply must show `[REDACTED-SENSITIVE-VALUE]` in place of the value. See [docs/PLUGIN.md](PLUGIN.md) Step 5.
 4. Tool exposed: ask the agent to run `vaultknox(action="status")`. A structured JSON status should be returned; otherwise the package is not importable in this environment (see troubleshooting in [docs/PLUGIN.md](PLUGIN.md)).
 
 ## Safe Storage Pattern
@@ -149,7 +162,9 @@ Use the tool to get a masked reference plus a one-time token:
 vaultknox(action="get_masked", secret_id="OPENAI_API_KEY", purpose="making API call")
 ```
 
-The plaintext secret is never exposed to the agent's context window. The caller (a downstream automation script) consumes the token with `vaultknox(action="consume_token", token=...)` to retrieve the secret value out-of-band.
+The plaintext secret is never exposed to the agent's context window by this path. The caller (a downstream automation script) consumes the token with `vaultknox(action="consume_token", token=...)` to retrieve the secret value out-of-band.
+
+Policy caveat: while the read actions above return masked references or one-time tokens, the `consume_token` action itself returns the plaintext value. If the operator's vault policy authorises `consume_token` for the agent, that plaintext lands in model context by design. Keep it denied (the default) unless a caller genuinely cannot consume the token out-of-band, and prefer having the script consume the token in its own process.
 
 ## Automation Pattern
 

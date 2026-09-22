@@ -4,7 +4,7 @@
 
 This guide defines how to run VaultKnox safely when Hermes Agent is integrated. The default stance is deny-by-default for writes so Hermes can read masked data and issue tokens without modifying stored secrets unless an operator explicitly allows it.
 
-The v0.8.0 plugin is the integration path; install it via `hermes-vault install-hooks` and enable it in `~/.hermes/config.yaml`. See [docs/AGENT_INTEGRATION.md](AGENT_INTEGRATION.md) and [docs/PLUGIN.md](PLUGIN.md) for install and verification steps.
+The v0.8.1 plugin is the integration path; install it via `hermes-vault install-hooks` and enable it in `~/.hermes/config.yaml`. See [docs/AGENT_INTEGRATION.md](AGENT_INTEGRATION.md) and [docs/PLUGIN.md](PLUGIN.md) for install and verification steps.
 
 ## Security Model
 

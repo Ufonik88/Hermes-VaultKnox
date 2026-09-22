@@ -5,6 +5,28 @@ All notable changes to VaultKnox are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] — 2026-09-22
+
+### Fixed
+
+- **Outbound replies now run the 28-pattern value detector and redact.** The plugin's `transform_llm_output` hook previously called only the solicitation-phrase scanner (`OUTBOUND_PATTERNS` — `drop your api key`, `paste your key`, …). An API key, token, or password sitting in an otherwise neutral assistant reply passed through to the user unchanged, even though the plugin catalog entry and `plugin.yaml` advertised outbound value redaction. Outbound text now takes two passes: (1) the full detector registry redacts matching values to `[REDACTED-SENSITIVE-VALUE]`, (2) solicitation phrases are rewritten on the *redacted* text so span indices stay valid. Returns `None` when nothing matched, preserving Hermes' "first non-empty return wins" contract.
+- **Same gap closed in the package-side hook.** `vaultknox.hooks.secret_guard` now exposes `scan_and_redact(text) -> (redacted, findings)` (the loop previously inlined in `handle()`) and `transform_outbound(text) -> str | None`, the complete outbound pass. `handle()` is unchanged in behaviour and now shares the helper.
+- **Log hygiene preserved.** Outbound findings log detector *names* and a count only; matches carry a SHA-256 fingerprint, never the raw value.
+
+### Documentation
+
+- **Every claim now matches the code.** `plugin.yaml`, `docs/AGENT_INTEGRATION.md`, `docs/PLUGIN.md`, and `README.md` describe outbound as *solicitation rewrite + secret-value redaction*, and state the scope: detection is regex-based, so a credential in a shape no detector covers is not caught.
+- **Trust-boundary caveat documented.** Masked reads (`get_masked`, `list`) and one-time tokens (`get_token`) never expose plaintext to model context, but if the operator's vault policy authorises the raw `consume_token` action for the agent, that handler returns the plaintext value by design — so "never in agent context" holds only for the read actions that return masked refs/tokens.
+
+### Added
+
+- **Regression tests.** `tests/test_hermes_plugin.py::TestOutboundValueRedaction` (detector-positive egress, symmetric control, compose-with-rewrite, log hygiene, idempotence), `tests/test_chat_detection.py::TestOutboundValueRedaction` for the package path, and `tests/test_hermes_plugin_sync.py::test_outbound_transform_parity_with_package_hook` pinning plugin/package output equality. The egress tests fail on v0.8.0 (12 failed / 2 passed when run against the 0.8.0 tree) and pass on v0.8.1.
+
+### Verification
+
+- `PYTHONPATH=src python -m pytest tests/ -q` → **372 passed** (0.8.0 baseline: 372 passed)
+- New outbound-redaction contracts fail red against `899fd8a` (v0.8.0) and pass on this commit
+
 ## [0.8.0] — 2026-09-21
 
 ### Added

@@ -78,6 +78,25 @@ def test_inbound_redaction_parity_with_package_hook():
         assert ctx["content"] == plugin_redacted, f"diverged on: {sample!r}"
 
 
+def test_outbound_transform_parity_with_package_hook():
+    """Outbound pass (value redaction + phrase rewrite) must match the package."""
+    from vaultknox.hooks import secret_guard
+
+    plugin = _load_plugin()
+    fake_key = "sk-" + "AbCd1234EfGh5678IjKl"
+    samples = [
+        f"Here is the summary: {fake_key} was in the config.",
+        "Just paste your api key here and I will store it.",
+        f"Found {fake_key} — now drop your api key here.",
+        "All good, nothing to see here.",
+        "",
+    ]
+    for sample in samples:
+        assert plugin.on_transform_llm_output(response_text=sample) == secret_guard.transform_outbound(sample), (
+            f"diverged on: {sample!r}"
+        )
+
+
 def test_plugin_is_self_contained_without_vaultknox():
     """Load + register + redact in a subprocess with vaultknox imports blocked."""
     code = textwrap.dedent(
@@ -122,6 +141,12 @@ def test_plugin_is_self_contained_without_vaultknox():
 
         out = json.loads(mod._handle_vaultknox({{"action": "status"}}))
         assert out.get("error") == "vaultknox_not_installed", out
+
+        secret = "sk-" + "AbCd1234EfGh5678IjKl"
+        egress = mod.on_transform_llm_output(response_text="value " + secret + " trailing")
+        assert egress is not None and secret not in egress, egress
+        assert "[REDACTED-SENSITIVE-VALUE]" in egress, egress
+        assert mod.on_transform_llm_output(response_text="nothing here") is None
         print("STANDALONE-OK")
         '''
     )

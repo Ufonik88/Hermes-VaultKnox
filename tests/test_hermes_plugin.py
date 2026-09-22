@@ -199,6 +199,85 @@ class TestOutboundRewrite:
 
 
 # ---------------------------------------------------------------------------
+# transform_llm_output — outbound secret-VALUE redaction (v0.8.1)
+# ---------------------------------------------------------------------------
+
+# Format-valid, low-entropy, non-real credentials. Built by concatenation so
+# the test file itself is not a contiguous secret literal.
+OPENAI_LIKE_KEY = "sk-" + "AbCd1234EfGh5678IjKl"
+GITHUB_LIKE_TOKEN = "ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"
+
+
+class TestOutboundValueRedaction:
+    """The 28-pattern VALUE detector must run on outgoing assistant text.
+
+    The catalog entry and plugin manifest advertise that outbound responses
+    are redacted with the same detector registry used inbound; these are the
+    contracts that prove it against the runtime behaviour.
+    """
+
+    def test_detector_match_in_neutral_sentence_is_redacted(self, registered):
+        text = (
+            "Here is the summary you asked for. The value "
+            f"{OPENAI_LIKE_KEY} was read from the config file."
+        )
+        result = registered.hooks["transform_llm_output"](response_text=text)
+        assert isinstance(result, str)
+        assert "[REDACTED-SENSITIVE-VALUE]" in result
+        assert OPENAI_LIKE_KEY not in result
+
+    def test_github_token_in_neutral_sentence_is_redacted(self, registered):
+        text = f"The token {GITHUB_LIKE_TOKEN} is still valid for another hour."
+        result = registered.hooks["transform_llm_output"](response_text=text)
+        assert isinstance(result, str)
+        assert "[REDACTED-SENSITIVE-VALUE]" in result
+        assert GITHUB_LIKE_TOKEN not in result
+
+    def test_ordinary_text_returns_none(self, registered):
+        result = registered.hooks["transform_llm_output"](
+            response_text="The deployment finished at 14:02 and all checks passed."
+        )
+        assert result is None
+
+    def test_value_redaction_and_phrase_rewrite_compose(self, registered):
+        text = (
+            f"Sure, I found {OPENAI_LIKE_KEY} in your .env. "
+            "Now just drop your api key here so I can store it."
+        )
+        result = registered.hooks["transform_llm_output"](response_text=text)
+        assert isinstance(result, str)
+        assert OPENAI_LIKE_KEY not in result
+        assert "[REDACTED-SENSITIVE-VALUE]" in result
+        assert "drop your api key" not in result
+        assert "hermes-vault add" in result
+
+    def test_secret_is_not_echoed_into_the_replacement(self, registered):
+        import json as _json
+
+        result = registered.hooks["transform_llm_output"](
+            response_text=f"key: {OPENAI_LIKE_KEY}"
+        )
+        assert _json.dumps(result).find(OPENAI_LIKE_KEY) == -1
+
+    def test_raw_secret_is_never_logged(self, registered, caplog):
+        import logging
+
+        with caplog.at_level(logging.INFO):
+            registered.hooks["transform_llm_output"](
+                response_text=f"the key is {OPENAI_LIKE_KEY} by the way"
+            )
+        assert OPENAI_LIKE_KEY not in caplog.text
+        assert "OpenAI API Key" in caplog.text  # detector NAME is allowed
+
+    def test_idempotent_on_already_redacted_text(self, registered):
+        once = registered.hooks["transform_llm_output"](
+            response_text=f"the key is {OPENAI_LIKE_KEY} by the way"
+        )
+        assert isinstance(once, str)
+        assert registered.hooks["transform_llm_output"](response_text=once) is None
+
+
+# ---------------------------------------------------------------------------
 # vaultknox tool
 # ---------------------------------------------------------------------------
 

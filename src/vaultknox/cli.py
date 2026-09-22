@@ -1341,8 +1341,9 @@ def install_hooks() -> None:
       before they reach persistence (primary protection).
     - ``pre_llm_call``: injects secret-handling rules into the agent's
       per-turn context.
-    - ``transform_llm_output``: rewrites outbound responses that ask
-      users to share secrets.
+    - ``transform_llm_output``: redacts secret values from outbound
+      responses with the same detector registry used inbound, then
+      rewrites phrases that ask users to share secrets.
     - the ``vaultknox`` tool: vault operations when the package is installed.
 
     Notes

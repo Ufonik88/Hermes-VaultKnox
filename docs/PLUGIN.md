@@ -4,7 +4,7 @@ This document covers the install, configuration, and verification path for the V
 
 ## What Ships
 
-The VaultKnox v0.8.0 package includes a self-contained plugin at `src/vaultknox/_hermes_plugin/` with three files:
+The VaultKnox v0.8.1 package includes a self-contained plugin at `src/vaultknox/_hermes_plugin/` with three files:
 
 | File | Role |
 |---|---|
@@ -18,7 +18,7 @@ Plugin manifest (`plugin.yaml`):
 
 ```yaml
 name: vaultknox
-version: 0.8.0
+version: 0.8.1
 requires_hermes: ">=0.19"
 provides_hooks:
   - pre_gateway_dispatch
@@ -39,7 +39,7 @@ hermes-vault install-hooks
 Sample output (paths shown for illustration):
 
 ```
-  ✅ Installed vaultknox plugin (v0.8.0) to /home/you/.hermes/plugins/vaultknox
+  ✅ Installed vaultknox plugin (v0.8.1) to /home/you/.hermes/plugins/vaultknox
      • __init__.py
      • detectors.py
      • plugin.yaml
@@ -110,9 +110,14 @@ Expected: a version string printed without traceback. If this fails the tool wil
 
 Send yourself a chat message containing a known API key pattern (for example an `sk-...` string). Expect the reply to be prefixed with a Security Notice and the key replaced with `[REDACTED-SENSITIVE-VALUE]`. Confirm `~/.hermes/sessions/*.jsonl` does not contain the key for that turn.
 
-### Step 5: outbound rewriting live
+### Step 5: outbound redaction + rewriting live
 
-Send a turn that legitimately asks the assistant to walk you through storing a key. Expect responses to use the `hermes-vault add ...` form rather than asking the user to paste a secret. The snippet injected by `pre_llm_call` produces this behavior; `transform_llm_output` rewrites any residual phrasing.
+Two things happen on `transform_llm_output`:
+
+1. **Value redaction.** The assistant reply is scanned with the same 28-pattern detector registry used inbound; any match is replaced with `[REDACTED-SENSITIVE-VALUE]`. Ask the assistant to quote a detector-matching dummy value back to you — the delivered reply shows the placeholder, not the value.
+2. **Solicitation rewrite.** Responses that ask you to share a secret are rewritten to the `hermes-vault add ...` form. The snippet injected by `pre_llm_call` prevents most of this upstream; `transform_llm_output` rewrites any residual phrasing.
+
+Detection is regex-based, so a credential in a shape no detector covers is not redacted.
 
 ### Step 6: tool exposed
 
@@ -181,9 +186,17 @@ Inspect the message; common causes include:
 - Missing operator unlock for write actions even though `allow_write=true` was passed (the master vault still needs to be unlocked).
 - Secret not found. Confirm `hermes-vault list` shows the id.
 
-### Outbound rewriting never fires
+### Outbound redaction/rewriting never fires
 
-Confirm the plugin is enabled and the gateway was restarted. `transform_llm_output` is only fired when the plugin is active. If the assistant is producing text that contains patterns you think should be rewritten, file an issue with the exact phrasing so the outbound patterns can be checked.
+Confirm the plugin is enabled and the gateway was restarted. `transform_llm_output` is only fired when the plugin is active. Two distinct passes run there: value redaction (the 28-pattern registry) and solicitation rewrite (the outbound phrase patterns). If the assistant emits a value or a phrase you expect to be caught, file an issue with the exact string (masked) so the detector or pattern can be checked.
+
+To confirm the deployed copy is current, check its version:
+
+```bash
+grep '^version:' ~/.hermes/plugins/vaultknox/plugin.yaml   # expect 0.8.1
+```
+
+A deployed 0.8.0 plugin rewrites solicitation phrases but does **not** redact secret values outbound. Re-run `hermes-vault install-hooks` from a v0.8.1 install and restart the gateway.
 
 ### Legacy artifacts still on disk
 
@@ -208,4 +221,4 @@ Restart Hermes.
 
 - [AGENT_INTEGRATION.md](AGENT_INTEGRATION.md) — hook contracts and tool schema
 - [hermes-write-gate-operations.md](hermes-write-gate-operations.md) — production write-gate policy
-- [CHANGELOG.md](../CHANGELOG.md) — release notes for hook contract changes through v0.8.0
+- [CHANGELOG.md](../CHANGELOG.md) — release notes for hook contract changes through v0.8.1

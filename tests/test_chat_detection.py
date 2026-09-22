@@ -4,6 +4,7 @@
 from vaultknox.agent_guide import TRIGGERS, check_triggers, get_system_prompt_snippet
 from vaultknox.detectors import DETECTORS
 from vaultknox.hermes_tool import vault_tool
+from vaultknox.hooks import secret_guard
 from vaultknox.hooks.secret_guard import _REDACT_REPLACEMENT, handle
 
 
@@ -112,6 +113,48 @@ class TestSecretGuardHook:
         assert all("fingerprint" in f for f in findings)
         assert all("matched_text" not in f for f in findings)
         assert all("span" in f for f in findings)
+
+
+class TestOutboundValueRedaction:
+    """Outbound secret-VALUE redaction on the package-side hook (v0.8.1).
+
+    ``secret_guard.transform_outbound`` must run the full 28-pattern detector
+    registry on outgoing text, not only the solicitation-phrase patterns.
+    """
+
+    OPENAI_LIKE_KEY = "sk-" + "AbCd1234EfGh5678IjKl"
+
+    def test_value_is_redacted(self):
+        text = f"Here is the summary: {self.OPENAI_LIKE_KEY} was in the config."
+        result = secret_guard.transform_outbound(text)
+        assert isinstance(result, str)
+        assert _REDACT_REPLACEMENT in result
+        assert self.OPENAI_LIKE_KEY not in result
+
+    def test_scan_and_redact_findings_carry_no_raw_value(self):
+        redacted, findings = secret_guard.scan_and_redact(f"key {self.OPENAI_LIKE_KEY}")
+        assert redacted.startswith("key " + _REDACT_REPLACEMENT)
+        assert findings and all("fingerprint" in f and "matched_text" not in f for f in findings)
+
+    def test_ordinary_text_returns_none(self):
+        assert secret_guard.transform_outbound("Nothing secret in this reply.") is None
+
+    def test_solicitation_phrase_still_rewritten(self):
+        result = secret_guard.transform_outbound("Just paste your api key here.")
+        assert isinstance(result, str)
+        assert "paste your api key" not in result
+
+    def test_value_and_phrase_together(self):
+        text = f"Found {self.OPENAI_LIKE_KEY} — now drop your api key here."
+        result = secret_guard.transform_outbound(text)
+        assert isinstance(result, str)
+        assert _REDACT_REPLACEMENT in result
+        assert self.OPENAI_LIKE_KEY not in result
+        assert "drop your api key" not in result
+
+    def test_non_string_is_safe(self):
+        assert secret_guard.transform_outbound(None) is None  # type: ignore[arg-type]
+        assert secret_guard.transform_outbound("") is None
 
 
 class TestAgentGuideTriggers:
