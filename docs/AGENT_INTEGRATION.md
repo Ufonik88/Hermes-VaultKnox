@@ -1,6 +1,6 @@
 # Agent Integration Guide
 
-This document explains how VaultKnox v0.8.1 integrates with Hermes Agent. It documents the catalog-ready plugin shipped with the package, the three hook contracts it registers, and safe storage and retrieval patterns for agent developers.
+This document explains how VaultKnox v0.8.2 integrates with Hermes Agent. It documents the catalog-ready plugin shipped with the package, the three hook contracts it registers, and safe storage and retrieval patterns for agent developers.
 
 ## What VaultKnox Does
 
@@ -11,11 +11,11 @@ Scope of that guarantee, stated precisely:
 - **Chat text** (inbound and outbound) is protected for secret values that match a detector pattern. Detection is regex-based, so a credential in a shape no detector covers is not caught.
 - **Vault reads** return masked references (`get_masked`, `list`) or single-use tokens (`get_token`), so no plaintext reaches the agent's context window — with one deliberate exception: if the operator's vault policy authorises the raw `consume_token` action for the agent, that handler *does* return the plaintext value into model context. Use it only when a downstream caller cannot consume the token out-of-band.
 
-## The Plugin (v0.8.1)
+## The Plugin (v0.8.2)
 
 The VaultKnox package now ships a self-contained plugin at `src/vaultknox/_hermes_plugin/`. `hermes-vault install-hooks` copies three files (`__init__.py`, `detectors.py`, `plugin.yaml`) into `~/.hermes/plugins/vaultknox/` and the operator enables it once in Hermes config.
 
-The legacy `vaultknox-secret-guard` plugin directory and the `~/.hermes/hooks/secret-guard/` gateway hook are superseded. Current Hermes does not consume hook-event write-backs, so the legacy gateway hook was a no-op; the v0.8.1 plugin replaces both. `install-hooks` reports the superseded directories when present and never deletes them.
+The legacy `vaultknox-secret-guard` plugin directory and the `~/.hermes/hooks/secret-guard/` gateway hook are superseded. Current Hermes does not consume hook-event write-backs, so the legacy gateway hook was a no-op; the v0.8.2 plugin replaces both. `install-hooks` reports the superseded directories when present and never deletes them.
 
 ## Hook Contracts
 

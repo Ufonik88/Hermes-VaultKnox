@@ -10,8 +10,11 @@ from vaultknox.detectors import DETECTORS
 from vaultknox.policy import PolicyEngine
 from vaultknox.vault import VaultError, VaultKnox
 
-READ_ACTIONS = {"status", "list", "get_masked", "get_token", "unlock", "lock", "inject_env", "consume_token"}
-WRITE_ACTIONS = {"add", "update", "delete", "revoke_token"}
+READ_ACTIONS = {"status", "list", "get_masked", "get_token", "unlock", "lock", "consume_token"}
+# inject_env writes decrypted plaintext into the process environment, so it is a
+# write action: every doc, the README table and the plugin tool schema all
+# advertise it as allow_write-gated. The code disagreed until v0.8.2.
+WRITE_ACTIONS = {"add", "update", "delete", "inject_env", "revoke_token"}
 
 # Actions that require master_password (operator-only, not agent)
 OPERATOR_ACTIONS = {"unlock"}

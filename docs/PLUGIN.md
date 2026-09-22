@@ -4,7 +4,7 @@ This document covers the install, configuration, and verification path for the V
 
 ## What Ships
 
-The VaultKnox v0.8.1 package includes a self-contained plugin at `src/vaultknox/_hermes_plugin/` with three files:
+The VaultKnox v0.8.2 package includes a self-contained plugin at `src/vaultknox/_hermes_plugin/` with three files:
 
 | File | Role |
 |---|---|
@@ -18,7 +18,7 @@ Plugin manifest (`plugin.yaml`):
 
 ```yaml
 name: vaultknox
-version: 0.8.1
+version: 0.8.2
 requires_hermes: ">=0.19"
 provides_hooks:
   - pre_gateway_dispatch
@@ -39,7 +39,7 @@ hermes-vault install-hooks
 Sample output (paths shown for illustration):
 
 ```
-  ✅ Installed vaultknox plugin (v0.8.1) to /home/you/.hermes/plugins/vaultknox
+  ✅ Installed vaultknox plugin (v0.8.2) to /home/you/.hermes/plugins/vaultknox
      • __init__.py
      • detectors.py
      • plugin.yaml
@@ -193,10 +193,10 @@ Confirm the plugin is enabled and the gateway was restarted. `transform_llm_outp
 To confirm the deployed copy is current, check its version:
 
 ```bash
-grep '^version:' ~/.hermes/plugins/vaultknox/plugin.yaml   # expect 0.8.1
+grep '^version:' ~/.hermes/plugins/vaultknox/plugin.yaml   # expect 0.8.2
 ```
 
-A deployed 0.8.0 plugin rewrites solicitation phrases but does **not** redact secret values outbound. Re-run `hermes-vault install-hooks` from a v0.8.1 install and restart the gateway.
+A deployed 0.8.0 plugin rewrites solicitation phrases but does **not** redact secret values outbound. Re-run `hermes-vault install-hooks` from a v0.8.2 install and restart the gateway.
 
 ### Legacy artifacts still on disk
 
@@ -221,4 +221,4 @@ Restart Hermes.
 
 - [AGENT_INTEGRATION.md](AGENT_INTEGRATION.md) — hook contracts and tool schema
 - [hermes-write-gate-operations.md](hermes-write-gate-operations.md) — production write-gate policy
-- [CHANGELOG.md](../CHANGELOG.md) — release notes for hook contract changes through v0.8.1
+- [CHANGELOG.md](../CHANGELOG.md) — release notes for hook contract changes through v0.8.2

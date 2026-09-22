@@ -5,6 +5,13 @@ All notable changes to VaultKnox are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] — 2026-09-22
+
+### Fixed
+
+- **`inject_env` is now gated by `allow_write`.** The action writes decrypted plaintext into the process environment, and five documents (README action table, README tool row, integration guide table, write-gate guide, plugin tool schema) already advertised it as write-gated, but `hermes_tool.py` classified it in `READ_ACTIONS`, so the agent tool path ran it ungated. It moved to `WRITE_ACTIONS`. The operator CLI path (`hermes-vault inject-env`, which prompts for the master password itself) and the MCP server are unaffected; only the Hermes tool wrapper now requires the flag it always advertised.
+- **README safety rule 1 stated "Hermes never sees plaintext secrets" without qualification.** It now names the two deliberate routes by which plaintext does reach the model: an operator policy that authorises raw `consume_token`, and `inject_env`. Reads through `get_masked`/`list`/`get_token` remain plaintext-free.
+
 ## [0.8.1] — 2026-09-22
 
 ### Fixed

@@ -15,7 +15,7 @@ VaultKnox is an encrypted secrets vault for Hermes Agent. It stores sensitive da
 
 ## Status
 
-VaultKnox v0.8.1 is in **alpha** (Development Status :: 3 - Alpha).
+VaultKnox v0.8.2 is in **alpha** (Development Status :: 3 - Alpha).
 
 - Intended use: local development and operator-managed Hermes environments.
 - Review the threat model before deploying in high-risk environments.
@@ -87,6 +87,7 @@ Compromise of any sub-key does not expose the master key or any other sub-key's 
 - Backup export and import with integrity signing
 - Audit logging with owner-only permissions and rotation
 - Hermes integration wrapper with write actions disabled by default
+- **v0.8.2** — `inject_env` is gated by `allow_write` in code, matching what the README table, integration guide, write-gate guide and plugin tool schema already claimed. README safety rule 1 now states the two deliberate plaintext routes (`consume_token` under an authorising policy, `inject_env`) instead of an unconditional "never sees plaintext".
 - **v0.8.1** — Outbound replies now run the full 28-pattern value detector and redact matches to `[REDACTED-SENSITIVE-VALUE]`, closing the gap where the catalog entry and manifest advertised outbound value redaction that the code did not perform. Same release: docs state the raw `consume_token` policy caveat (a masked read never exposes plaintext; an operator policy that authorises `consume_token` returns the plaintext into model context by design).
 - **v0.8.0** — Catalog-ready Hermes plugin shipped inside the package at `src/vaultknox/_hermes_plugin/`. `hermes-vault install-hooks` deploys it to `~/.hermes/plugins/vaultknox/`. Three hooks (`pre_gateway_dispatch`, `pre_llm_call`, `transform_llm_output`) plus the `vaultknox` tool, gated by package import. Hook contracts fixed so inbound redaction is live again on current Hermes.
 - **v0.8.0** — Detector registry expanded to **28 patterns** (added Google API key, GCP key material, Azure connection string, JWT, high-entropy assignment, etc., across earlier security work).
@@ -238,8 +239,8 @@ The safest integration path is the `vault_tool` wrapper in `src/vaultknox/hermes
 
 ### Safety Rules
 
-1. Hermes never sees plaintext secrets.
-2. Write actions require `allow_write=True`.
+1. Masked reads (`get_masked`, `list`) and one-time tokens (`get_token`) never expose plaintext to Hermes. Two deliberate exceptions do, both operator-controlled: an operator vault policy that authorises raw `consume_token` returns the plaintext to the model, and `inject_env` writes it into the process environment and requires `allow_write=True`.
+2. Write actions (`add`, `update`, `delete`, `inject_env`, `revoke_token`) require `allow_write=True`.
 3. Tokens are single-use and expire by default after 300 seconds.
 4. Auto-lock applies after inactivity.
 5. Every access is logged without sensitive data.
@@ -423,7 +424,7 @@ hermes-vault secrets list
 hermes-vault secrets env --shell
 ```
 
-## Hermes Plugin (v0.8.1)
+## Hermes Plugin (v0.8.2)
 
 The package ships a catalog-ready plugin at `src/vaultknox/_hermes_plugin/`. When deployed by `hermes-vault install-hooks`, the plugin copies three files (`__init__.py`, `detectors.py`, `plugin.yaml`) into `~/.hermes/plugins/vaultknox/` and the operator enables it once in Hermes config. No global Python paths or compile step.
 
@@ -611,7 +612,7 @@ rejected.
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for the complete version history, including the v0.8.1 outbound-redaction release and v0.7.2 Onboard release.
+See [CHANGELOG.md](CHANGELOG.md) for the complete version history, including the v0.8.2 write-gate fix and the v0.8.1 outbound-redaction release and v0.7.2 Onboard release.
 
 ## Release Guidance
 
