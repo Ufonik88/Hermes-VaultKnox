@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="lock-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#06B6D4"/>
+      <stop offset="30%" stop-color="#8B5CF6"/>
+      <stop offset="60%" stop-color="#EC4899"/>
+      <stop offset="85%" stop-color="#FACC15"/>
+      <stop offset="100%" stop-color="#22C55E"/>
+    </linearGradient>
+    <filter id="inner-shadow">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+
+  <!-- Padlock shackle (U-shaped arc) -->
+  <path d="M176 224V180C176 140.09 208.09 108 248 108H264C303.91 108 336 140.09 336 180V224"
+        stroke="url(#lock-grad)" stroke-width="44" stroke-linecap="round" fill="none"/>
+
+  <!-- Padlock body (rounded square) -->
+  <rect x="128" y="220" width="256" height="208" rx="44" fill="url(#lock-grad)" filter="url(#inner-shadow)"/>
+
+  <!-- Subtle edge highlight -->
+  <rect x="131" y="223" width="250" height="202" rx="41" fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="1.5"/>
+
+  <!-- The letter "C" — dark silhouette -->
+  <text x="256" y="366" text-anchor="middle" fill="#0A0A0A" font-size="140"
+        font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif"
+        font-weight="900" letter-spacing="-2">C</text>
+</svg>

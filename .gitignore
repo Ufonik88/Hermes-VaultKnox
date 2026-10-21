@@ -1,0 +1,42 @@
+.pytest_cache/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+dist/
+build/
+*.egg-info/
+.coverage
+htmlcov/
+
+# Runtime vault artifacts
+.runtime/
+*.db
+*.db-shm
+*.db-wal
+*.vault
+*.log
+
+# Environment files (secrets)
+.env
+.env.*
+*.env
+
+# Encrypted secrets key file
+encrypted-secrets/master.key
+
+# Internal planning / personal tracking (do not commit)
+MASTER_TODO.md
+VAULT_IMPROVE.md
+hermes-vaultknox-plan.md
+=*
+*.pr-body.md
+
+# IDE / OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+# Internal planning / personal tracking (moved to ~/.hermes/vaultknox-internal/)
+CLAUDE_IMPROVE_PLAN.md

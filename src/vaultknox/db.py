@@ -1,0 +1,268 @@
+from __future__ import annotations
+
+import json
+import os
+import sqlite3
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Iterator
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS secrets (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    label TEXT NOT NULL,
+    data BLOB NOT NULL,
+    nonce BLOB NOT NULL,
+    tag BLOB NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    metadata TEXT NOT NULL,
+    expires_at TEXT,
+    search_tokens TEXT
+);
+
+CREATE TABLE IF NOT EXISTS vault_config (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS vault_tokens (
+    token TEXT PRIMARY KEY,
+    secret_id TEXT NOT NULL,
+    purpose TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    FOREIGN KEY(secret_id) REFERENCES secrets(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS vault_tokens_revoked (
+    token TEXT PRIMARY KEY,
+    revoked_at TEXT NOT NULL,
+    reason TEXT
+);
+
+CREATE TABLE IF NOT EXISTS search_index (
+    token TEXT PRIMARY KEY,
+    secret_id TEXT NOT NULL,
+    field TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+"""
+
+MIGRATIONS = """
+CREATE TABLE IF NOT EXISTS vault_tokens_revoked (
+    token TEXT PRIMARY KEY,
+    revoked_at TEXT NOT NULL,
+    reason TEXT
+);
+"""
+
+# Applied once per connection via ALTER TABLE (idempotent via exception suppression)
+_COLUMN_MIGRATIONS: list[str] = [
+    "ALTER TABLE secrets ADD COLUMN expires_at TEXT",
+    "ALTER TABLE secrets ADD COLUMN search_tokens TEXT",
+]
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+class VaultDatabase:
+    def __init__(self, db_path: Path) -> None:
+        self.db_path = db_path
+        self._schema_current = False
+
+    def initialize(self) -> None:
+        from vaultknox.config import create_private_dir
+        create_private_dir(self.db_path.parent)
+        # Create the database file with restrictive permissions
+        # SQLite will create the file, but we ensure the directory is 0o700
+        with self.connection() as conn:
+            conn.executescript(SCHEMA)
+            rows = conn.execute("PRAGMA integrity_check").fetchall()
+            if len(rows) != 1 or rows[0][0] != "ok":
+                raise RuntimeError(f"SQLite integrity check failed after initialization: {[r[0] for r in rows]}")
+        os.chmod(self.db_path, 0o600)
+
+    @contextmanager
+    def connection(self) -> Iterator[sqlite3.Connection]:
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA synchronous = NORMAL")
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA secure_delete = ON")
+            if not self._schema_current:
+                conn.executescript(MIGRATIONS)
+                for stmt in _COLUMN_MIGRATIONS:
+                    try:
+                        conn.execute(stmt)
+                    except sqlite3.OperationalError as exc:
+                        msg = str(exc).lower()
+                        if any(p in msg for p in ("duplicate column name", "already exists", "no such table")):
+                            pass  # expected during init or idempotent re-run
+                        else:
+                            raise
+                conn.commit()
+                self._schema_current = True
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def get_config(self, key: str) -> str | None:
+        with self.connection() as conn:
+            row = conn.execute("SELECT value FROM vault_config WHERE key = ?", (key,)).fetchone()
+            return None if row is None else str(row["value"])
+
+    def set_config(self, key: str, value: str) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                "INSERT INTO vault_config(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+
+    def insert_secret(
+        self,
+        secret_id: str,
+        secret_type: str,
+        label: str,
+        ciphertext: bytes,
+        nonce: bytes,
+        tag: bytes,
+        metadata: dict[str, Any] | str,
+        expires_at: str | None = None,
+        search_tokens: str | None = None,
+    ) -> None:
+        now = utc_now()
+        metadata_value = metadata if isinstance(metadata, str) else json.dumps(metadata, separators=(",", ":"))
+        with self.connection() as conn:
+            conn.execute(
+                "INSERT INTO secrets(id, type, label, data, nonce, tag, created_at, updated_at, metadata, expires_at, search_tokens) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (secret_id, secret_type, label, ciphertext, nonce, tag, now, now, metadata_value, expires_at, search_tokens),
+            )
+
+    def update_secret(
+        self,
+        secret_id: str,
+        secret_type: str,
+        label: str,
+        ciphertext: bytes,
+        nonce: bytes,
+        tag: bytes,
+        metadata: dict[str, Any] | str,
+        expires_at: str | None = None,
+        search_tokens: str | None = None,
+    ) -> None:
+        metadata_value = metadata if isinstance(metadata, str) else json.dumps(metadata, separators=(",", ":"))
+        with self.connection() as conn:
+            conn.execute(
+                "UPDATE secrets SET type = ?, label = ?, data = ?, nonce = ?, tag = ?, updated_at = ?, metadata = ?, expires_at = ?, search_tokens = ? WHERE id = ?",
+                (secret_type, label, ciphertext, nonce, tag, utc_now(), metadata_value, expires_at, search_tokens, secret_id),
+            )
+            if conn.total_changes == 0:
+                raise KeyError(f"Secret not found: {secret_id}")
+
+    def get_secret_row(self, secret_id: str) -> sqlite3.Row:
+        with self.connection() as conn:
+            row = conn.execute("SELECT * FROM secrets WHERE id = ?", (secret_id,)).fetchone()
+            if row is None:
+                raise KeyError(f"Secret not found: {secret_id}")
+            return row
+
+    def list_secrets(self) -> list[dict[str, Any]]:
+        with self.connection() as conn:
+            rows = conn.execute("SELECT id, type, label, metadata, created_at, updated_at, expires_at, search_tokens FROM secrets ORDER BY updated_at DESC").fetchall()
+        return [dict(row) for row in rows]
+
+    def delete_secret(self, secret_id: str) -> None:
+        with self.connection() as conn:
+            conn.execute("DELETE FROM secrets WHERE id = ?", (secret_id,))
+            if conn.total_changes == 0:
+                raise KeyError(f"Secret not found: {secret_id}")
+
+    def list_secret_rows_raw(self) -> list[sqlite3.Row]:
+        with self.connection() as conn:
+            return conn.execute("SELECT id, type, label, data, nonce, tag, metadata, search_tokens FROM secrets").fetchall()
+
+    def update_secret_crypto(self, secret_id: str, ciphertext: bytes, nonce: bytes, tag: bytes, metadata: dict[str, Any] | str, search_tokens: str | None = None) -> None:
+        metadata_value = metadata if isinstance(metadata, str) else json.dumps(metadata, separators=(",", ":"))
+        with self.connection() as conn:
+            conn.execute(
+                "UPDATE secrets SET data = ?, nonce = ?, tag = ?, metadata = ?, updated_at = ?, search_tokens = ? WHERE id = ?",
+                (ciphertext, nonce, tag, metadata_value, utc_now(), search_tokens, secret_id),
+            )
+            if conn.total_changes == 0:
+                raise KeyError(f"Secret not found: {secret_id}")
+
+    def store_token(self, token: str, secret_id: str, purpose: str, expires_at: str) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                "INSERT INTO vault_tokens(token, secret_id, purpose, created_at, expires_at, used_at) VALUES(?, ?, ?, ?, ?, NULL)",
+                (token, secret_id, purpose, utc_now(), expires_at),
+            )
+            conn.execute(
+                "INSERT INTO search_index(token, secret_id, field, created_at) VALUES(?, ?, ?, ?)",
+                (token, secret_id, "token", utc_now()),
+            )
+
+    def mark_token_used(self, token: str) -> None:
+        with self.connection() as conn:
+            conn.execute("UPDATE vault_tokens SET used_at = ? WHERE token = ? AND used_at IS NULL", (utc_now(), token))
+            if conn.total_changes == 0:
+                raise KeyError(f"Token not available: {token}")
+
+    def get_token_row(self, token: str) -> sqlite3.Row:
+        with self.connection() as conn:
+            row = conn.execute("SELECT * FROM vault_tokens WHERE token = ?", (token,)).fetchone()
+            if row is None:
+                raise KeyError(f"Token not found: {token}")
+            return row
+
+    def count_secrets(self) -> int:
+        with self.connection() as conn:
+            row = conn.execute("SELECT COUNT(*) AS count FROM secrets").fetchone()
+            return int(row["count"])
+
+    def revoke_token(self, token: str, reason: str | None = None) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO vault_tokens_revoked(token, revoked_at, reason) VALUES(?, ?, ?)",
+                (token, utc_now(), reason),
+            )
+            conn.execute("DELETE FROM search_index WHERE token = ?", (token,))
+
+    def is_token_revoked(self, token: str) -> bool:
+        with self.connection() as conn:
+            row = conn.execute("SELECT token FROM vault_tokens_revoked WHERE token = ?", (token,)).fetchone()
+            return row is not None
+
+    def delete_token(self, token: str) -> None:
+        with self.connection() as conn:
+            conn.execute("DELETE FROM vault_tokens WHERE token = ?", (token,))
+            conn.execute("DELETE FROM search_index WHERE token = ?", (token,))
+
+    def cleanup_expired_tokens(self) -> int:
+        with self.connection() as conn:
+            now = utc_now()
+            cursor = conn.execute("DELETE FROM vault_tokens WHERE expires_at < ?", (now,))
+            conn.execute("DELETE FROM search_index WHERE token IN (SELECT token FROM vault_tokens WHERE expires_at < ?)", (now,))
+            return cursor.rowcount
+
+    def vacuum(self) -> None:
+        with self.connection() as conn:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        # VACUUM must run outside a transaction
+        conn = sqlite3.connect(self.db_path)
+        try:
+            conn.execute("VACUUM")
+        finally:
+            conn.close()

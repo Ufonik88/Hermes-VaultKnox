@@ -1,0 +1,457 @@
+"""
+VaultKnox Autonomous Secrets — Encrypted credential store for Hermes Agent.
+
+Provides versioned encrypted credential storage backed by a local key
+file on disk. Unlike the master-password vault, this store is designed for
+*autonomous* operation: scripts, cron jobs, and tools can read credentials
+without manual unlock — the key file *is* the unlock mechanism.
+
+Security model (same as SSH private keys):
+  1. The ``master.key`` file has owner-only permissions (chmod 600).
+  2. The encrypted ``secrets.enc`` file is safe for backups, git, and session logs.
+  3. If an attacker gains root-level filesystem access, they can read the key file
+     and decrypt — this is an accepted trade-off for full autonomy.
+
+Versioned format:
+  - v1: Legacy Fernet (AES-128-CBC + HMAC-SHA256) - read-only support
+  - v2: AES-256-GCM with HKDF key separation - current format
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import os
+import secrets
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
+from vaultknox.config import create_private_dir, write_private_file
+from vaultknox.core import KEY_SIZE, NONCE_SIZE
+from vaultknox.exceptions import AutonomousSecretsError
+
+
+class AutonomousSecretsStore:
+    """
+    Encrypted credential store backed by a key file.
+
+    Directory layout::
+
+        ~/.hermes/encrypted-secrets/
+        ├── master.key          # 32-byte key (chmod 600)
+        └── secrets.enc         # Encrypted JSON blob with version header
+
+    """
+
+    #: Default location where the key file and encrypted store live,
+    #: relative to the Hermes home directory.
+    DEFAULT_SUBDIR = "encrypted-secrets"
+
+    # Default suffixes that identify credential env var names.
+    CREDENTIAL_SUFFIXES: tuple[str, ...] = ("_KEY", "_TOKEN", "_SECRET", "_PASSWORD", "_CREDENTIALS")
+
+    # Current format version
+    CURRENT_VERSION = 2
+
+    def __init__(self, base_dir: str | os.PathLike | None = None) -> None:
+        self._base_dir = Path(base_dir) if base_dir else self._find_default_dir()
+        self._key_path = self._base_dir / "master.key"
+        self._secrets_path = self._base_dir / "secrets.enc"
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def is_available() -> bool:
+        """Return True if the encrypted secrets store exists and is initialised."""
+        default = Path.home() / ".hermes" / AutonomousSecretsStore.DEFAULT_SUBDIR
+        key = default / "master.key"
+        secrets = default / "secrets.enc"
+        return key.exists() and secrets.exists()
+
+    def initialize(self, force: bool = False) -> str:
+        """
+        Create a fresh key file and empty encrypted store.
+
+        Raises ``AutonomousSecretsError`` if the store already exists and
+        ``force`` is not set.
+        """
+        if self._base_dir.exists() and not force:
+            raise AutonomousSecretsError(
+                f"Store already exists at {self._base_dir}. "
+                "Use force=True to overwrite."
+            )
+        create_private_dir(self._base_dir)
+        # Generate a 32-byte key for AES-256-GCM
+        key = secrets.token_bytes(KEY_SIZE)
+        write_private_file(self._key_path, key)
+        # Write empty v2 store
+        empty_store = self._encrypt_v2(key, {})
+        write_private_file(self._secrets_path, empty_store)
+        return f"Initialised autonomous secrets store at {self._base_dir}"
+
+    @property
+    def key_path(self) -> Path:
+        return self._key_path
+
+    @property
+    def secrets_path(self) -> Path:
+        return self._secrets_path
+
+    def get(self, key: str) -> str:
+        """Retrieve a single secret value."""
+        secrets = self._decrypt()
+        if key not in secrets:
+            raise AutonomousSecretsError(f"Secret '{key}' not found")
+        return secrets[key]
+
+    def set(self, key: str, value: str) -> None:
+        """Add or update a secret."""
+        secrets = self._decrypt()
+        secrets[key] = value
+        self._encrypt(secrets)
+
+    def delete(self, key: str) -> None:
+        """Remove a secret by key."""
+        secrets = self._decrypt()
+        if key not in secrets:
+            raise AutonomousSecretsError(f"Secret '{key}' not found")
+        del secrets[key]
+        self._encrypt(secrets)
+
+    def list_keys(self) -> list[str]:
+        """Return all secret key names (without revealing values)."""
+        return sorted(self._decrypt().keys())
+
+    def list_secrets(self) -> dict[str, str]:
+        """Return all secrets (key → value). Use with caution — contains plaintext."""
+        return dict(self._decrypt())
+
+    def dump_env(self) -> str:
+        """Return shell-safe ``export KEY='value'`` lines."""
+        secrets = self._decrypt()
+        lines: list[str] = []
+        for key, value in sorted(secrets.items()):
+            safe = value.replace("'", "'\\''")
+            lines.append(f"export {key}='{safe}'")
+        return "\n".join(lines)
+
+    def dump_json(self) -> str:
+        """Return all secrets as formatted JSON."""
+        return json.dumps(self._decrypt(), indent=2)
+
+    def to_dict(self) -> dict[str, str]:
+        """Return all secrets as a plain dict."""
+        return dict(self._decrypt())
+
+    def populate_from(self, env_file: str | os.PathLike, *, overwrite: bool = False) -> dict[str, str]:
+        """
+        Populate the encrypted store from a `.env` file.
+
+        Returns a dict of ``{key: "stored" | "skipped"}`` for reporting.
+        """
+        env_path = Path(env_file)
+        if not env_path.exists():
+            raise AutonomousSecretsError(f"Environment file not found: {env_path}")
+        secrets = self._decrypt()
+        results: dict[str, str] = {}
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip("'\"")
+            if not key or not value:
+                continue
+            if key in secrets and not overwrite:
+                results[key] = "skipped (exists)"
+                continue
+            secrets[key] = value
+            results[key] = "stored"
+        self._encrypt(secrets)
+        return results
+
+    def auto_seal(
+        self,
+        env_file: str | os.PathLike | None = None,
+        *,
+        dry_run: bool = False,
+        strip_plaintext: bool = False,
+    ) -> dict[str, Any]:
+        """
+        **Auto-Seal**: automatically find and encrypt any credential keys
+        in ``.env`` that aren't yet in the encrypted store.
+
+        This is the "set-and-forget" safety net. Run periodically (via cron),
+        or on-demand after adding new API keys.
+
+        How it works:
+        1. Reads the Hermes ``.env`` file.
+        2. Identifies keys ending in credential suffixes
+           (``_KEY``, ``_TOKEN``, ``_SECRET``, ``_PASSWORD``, ``_CREDENTIALS``).
+        3. Cross-references with the encrypted store.
+        4. Encrypts any new keys.
+        5. Optionally replaces plaintext values in ``.env`` with a
+           ``# auto-sealed`` comment.
+
+        Args:
+            env_file: Path to the ``.env`` file. Defaults to
+                      ``~/.hermes/.env``.
+            dry_run: If True, only report what would be done — don't
+                     actually encrypt or modify anything.
+            strip_plaintext: If True, replace the value in ``.env`` with
+                             a ``# auto-sealed`` comment after encrypting.
+                             **Caution**: Hermes reads ``.env`` at startup,
+                             so only enable this if you're using the
+                             ``load_secrets.sh`` bootstrap.
+
+        Returns:
+            A dict with keys ``encrypted``, ``skipped``, ``errors``, and
+            ``dry_run``.
+        """
+        if env_file is None:
+            env_file = Path.home() / ".hermes" / ".env"
+        env_path = Path(env_file)
+
+        if not env_path.exists():
+            return {"encrypted": [], "skipped": [], "errors": [f"File not found: {env_path}"], "dry_run": dry_run}
+
+        current = self._decrypt()
+        results: dict[str, Any] = {
+            "encrypted": [],
+            "skipped": [],
+            "errors": [],
+            "dry_run": dry_run,
+            "scanned_at": datetime.now().isoformat(),
+        }
+
+        lines = env_path.read_text(encoding="utf-8").splitlines(keepends=True)
+        new_lines = list(lines) if strip_plaintext else None
+
+        for i, line in enumerate(lines):
+            raw = line.strip()
+            if not raw or raw.startswith("#") or "=" not in raw:
+                continue
+
+            key, _, value = raw.partition("=")
+            key = key.strip()
+            value = value.strip().strip("'\"")
+
+            if not key or not value:
+                continue
+
+            # Check if this is a credential key
+            is_credential = any(key.upper().endswith(suffix) for suffix in self.CREDENTIAL_SUFFIXES)
+            if not is_credential:
+                continue
+
+            # Check if already in encrypted store
+            if key in current:
+                results["skipped"].append({"key": key, "reason": "already encrypted"})
+                continue
+
+            # Check if value looks valid (at least 8 chars, not a placeholder)
+            if len(value) < 8 or value in ("placeholder", "changeme", "your-key-here", ""):
+                results["skipped"].append({"key": key, "reason": "placeholder or too short"})
+                continue
+
+            if dry_run:
+                results["encrypted"].append({"key": key, "value_preview": value[:8] + "...", "action": "would encrypt"})
+                continue
+
+            # Encrypt it
+            try:
+                current[key] = value
+                results["encrypted"].append({"key": key, "value_preview": value[:8] + "...", "action": "encrypted"})
+            except Exception as exc:
+                results["errors"].append({"key": key, "error": str(exc)})
+                continue
+
+            # Optionally strip plaintext from .env
+            if strip_plaintext and new_lines is not None:
+                new_lines[i] = f"# {key}=[auto-sealed by Hermes VaultKnox v0.2.0]\n"
+
+        # Write the encrypted store (if not dry run and we have changes)
+        if not dry_run and results["encrypted"]:
+            self._encrypt(current)
+
+        # Write the stripped .env (if requested)
+        if strip_plaintext and new_lines is not None and not dry_run:
+            env_path.write_text("".join(new_lines), encoding="utf-8")
+
+        return results
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _load_key(self) -> bytes:
+        if not self._key_path.exists():
+            raise AutonomousSecretsError(
+                f"Master key not found at {self._key_path}. "
+                "Run 'hermes-secrets init' or 'hermes vault secrets init' first."
+            )
+        return self._key_path.read_bytes()
+
+    def _decrypt(self) -> dict[str, str]:
+        if not self._secrets_path.exists() or self._secrets_path.stat().st_size == 0:
+            return {}
+        raw = self._secrets_path.read_bytes()
+        if raw.strip() in (b"{}", b""):
+            return {}
+
+        # Check if it's v1 (Fernet) or v2 (AES-256-GCM)
+        try:
+            # Try to parse as JSON (v2 format). Do not truncate: compact v2
+            # payloads can exceed 100 bytes before the closing brace.
+            header = json.loads(raw.decode("utf-8"))
+            if isinstance(header, dict) and "v" in header:
+                version = header["v"]
+                if version == 2:
+                    return self._decrypt_v2(raw)
+                elif version == 1:
+                    # v1 is legacy Fernet - migrate to v2
+                    return self._migrate_v1_to_v2(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError, KeyError):
+            pass
+
+        # Fallback: assume v1 Fernet format
+        return self._migrate_v1_to_v2(raw)
+
+    def _decrypt_v2(self, raw: bytes) -> dict[str, str]:
+        """Decrypt v2 format (AES-256-GCM with HKDF)."""
+        try:
+            # Parse the full JSON
+            data = json.loads(raw.decode("utf-8"))
+            version = data.get("v", 1)
+            if version != 2:
+                raise AutonomousSecretsError(f"Unsupported version: {version}")
+
+            salt = bytes.fromhex(data["salt"])
+            nonce = bytes.fromhex(data["nonce"])
+            ciphertext = bytes.fromhex(data["ct"])
+
+            key = self._load_key()
+            # Derive encryption key using HKDF
+            hkdf = HKDF(algorithm=hashes.SHA256(), length=KEY_SIZE, salt=salt, info=b"vaultknox-autonomous-v2")
+            enc_key = hkdf.derive(key)
+
+            aesgcm = AESGCM(enc_key)
+            plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+            return json.loads(plaintext.decode("utf-8"))
+        except Exception as exc:
+            raise AutonomousSecretsError(
+                f"Failed to decrypt v2 secrets store: {exc}. "
+                "The key file may be corrupted."
+            ) from exc
+
+    def _migrate_v1_to_v2(self, raw: bytes) -> dict[str, str]:
+        """Migrate v1 (Fernet) store to v2 (AES-256-GCM).
+
+        Crash safety: only the store file is rewritten here. The existing key
+        file bytes become the v2 HKDF input, so an interruption can never
+        leave a key file that no longer matches the store. (The original
+        design rewrote the key file first; a crash in between permanently
+        bricked the pair, since neither key could decrypt the v1 store.)
+        """
+        key = self._load_key()
+        # v1 stores were Fernet-encrypted. The key file normally holds the
+        # Fernet key exactly as the v1 code wrote it; also tolerate raw key
+        # material as a best-effort recovery for foreign layouts.
+        plaintext: bytes | None = None
+        last_error: Exception | None = None
+        for candidate in (key, base64.urlsafe_b64encode(key)):
+            try:
+                plaintext = Fernet(candidate).decrypt(raw)
+                break
+            except Exception as exc:  # ValueError (bad key) / InvalidToken
+                last_error = exc
+        if plaintext is None:
+            raise AutonomousSecretsError(
+                f"Failed to decrypt v1 secrets store: {last_error}. "
+                "The key file may be corrupted."
+            )
+
+        secrets_map: dict[str, str] = json.loads(plaintext.decode("utf-8"))
+
+        # Re-encrypt in v2 format using the current key file bytes as the
+        # HKDF input; the key file itself is left untouched (single write).
+        encrypted = self._encrypt_v2(key, secrets_map)
+        write_private_file(self._secrets_path, encrypted)
+
+        return secrets_map
+
+    def _encrypt(self, secrets: dict[str, str]) -> None:
+        """Encrypt secrets using current version (v2)."""
+        key = self._load_key()
+        encrypted = self._encrypt_v2(key, secrets)
+        write_private_file(self._secrets_path, encrypted)
+
+    def _encrypt_v2(self, key: bytes, secret_map: dict[str, str]) -> bytes:
+        """Encrypt secrets using v2 format (AES-256-GCM with HKDF)."""
+        # Generate random salt for HKDF
+        salt = secrets.token_bytes(16)
+        nonce = secrets.token_bytes(NONCE_SIZE)
+
+        # Derive encryption key using HKDF
+        hkdf = HKDF(algorithm=hashes.SHA256(), length=KEY_SIZE, salt=salt, info=b"vaultknox-autonomous-v2")
+        enc_key = hkdf.derive(key)
+
+        plaintext = json.dumps(secret_map, separators=(",", ":")).encode("utf-8")
+        aesgcm = AESGCM(enc_key)
+        ciphertext = aesgcm.encrypt(nonce, plaintext, None)
+
+        # Build v2 format
+        data = {
+            "v": 2,
+            "salt": salt.hex(),
+            "nonce": nonce.hex(),
+            "ct": ciphertext.hex(),
+        }
+        return json.dumps(data, separators=(",", ":")).encode("utf-8")
+
+    @staticmethod
+    def _find_default_dir() -> Path:
+        return Path.home() / ".hermes" / AutonomousSecretsStore.DEFAULT_SUBDIR
+
+
+# ------------------------------------------------------------------
+# Convenience helpers (for use in scripts)
+# ------------------------------------------------------------------
+
+def get_secret(key: str, base_dir: str | os.PathLike | None = None) -> str:
+    """One-liner: get a single secret by key."""
+    store = AutonomousSecretsStore(base_dir)
+    return store.get(key)
+
+
+def export_env(base_dir: str | os.PathLike | None = None, *, safe: bool = True) -> None:
+    """
+    Export all secrets directly into ``os.environ``.
+
+    Useful for modules that need to access secrets via ``os.environ``
+    before any Hermes startup code runs.
+    """
+    store = AutonomousSecretsStore(base_dir)
+    secrets = store.list_secrets()
+    for key, value in secrets.items():
+        os.environ[key] = value
+
+
+# ------------------------------------------------------------------
+# CLI entry point (used by ``hermes-secrets`` script)
+# ------------------------------------------------------------------
+
+def cli_main() -> None:
+    """Simple CLI entry point — delegates to ``vaultknox.cli.secrets_main``."""
+    # Avoid circular import by deferring
+    from vaultknox.cli import secrets_main  # type: ignore[import-untyped]
+    secrets_main()

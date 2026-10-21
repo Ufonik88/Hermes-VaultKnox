@@ -1,0 +1,7 @@
+VaultKnox
+Copyright 2026 Ufonik
+
+VaultKnox is maintained by Ufonik.
+
+This repository contains code intended for local secrets management in Hermes Agent workflows.
+Use of this project is governed by the Apache 2.0 license in the LICENSE file.
