@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 import math
-import re
 
 from vaultknox.exceptions import VaultError
 
 
 def estimate_entropy(password: str) -> float:
     """Estimate password entropy in bits using NIST SP 800-63B approximation."""
-    # Character pool sizes
-    has_lower = bool(re.search(r"[a-z]", password))
-    has_upper = bool(re.search(r"[A-Z]", password))
-    has_digit = bool(re.search(r"\d", password))
-    has_special = bool(re.search(r"[^a-zA-Z0-9]", password))
+    # Character pool sizes using standard library
+    has_lower = any(c.islower() for c in password)
+    has_upper = any(c.isupper() for c in password)
+    has_digit = any(c.isdigit() for c in password)
+    has_special = any(not c.isalnum() for c in password)
 
     pool_size = 0
     if has_lower:
@@ -48,11 +47,11 @@ def validate_password_strength(password: str) -> None:
     if len(password) < 12:
         raise VaultError("Password must be at least 12 characters long")
 
-    # Check character classes
-    has_lower = bool(re.search(r"[a-z]", password))
-    has_upper = bool(re.search(r"[A-Z]", password))
-    has_digit = bool(re.search(r"\d", password))
-    has_special = bool(re.search(r"[^a-zA-Z0-9]", password))
+    # Check character classes using standard library
+    has_lower = any(c.islower() for c in password)
+    has_upper = any(c.isupper() for c in password)
+    has_digit = any(c.isdigit() for c in password)
+    has_special = any(not c.isalnum() for c in password)
 
     char_classes = sum([has_lower, has_upper, has_digit, has_special])
     if char_classes < 3:

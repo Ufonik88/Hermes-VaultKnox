@@ -72,6 +72,11 @@ def validate_kdf_params(params: dict[str, Any]) -> None:
 
 
 def derive_scoped_key(master_key: bytes, context: bytes = b"vaultknox-entry") -> bytes:
+    """Derive a scoped key from the master key using HKDF with context.
+    
+    This provides key separation so different operations use different keys
+    derived from the master key, following the principle of least privilege.
+    """
     hkdf = HKDF(algorithm=hashes.SHA256(), length=KEY_SIZE, salt=None, info=context)
     return hkdf.derive(master_key)
 
