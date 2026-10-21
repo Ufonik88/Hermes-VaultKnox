@@ -7,13 +7,31 @@ import math
 from vaultknox.exceptions import VaultError
 
 
+def _char_classes(password: str) -> tuple[bool, bool, bool, bool]:
+    """Report which character classes a password contains.
+
+    Returns ``(lower, upper, digit, special)``.
+
+    The ASCII ranges are deliberate and preserve the semantics of the previous
+    ``re.search(r"[a-z]" | r"[A-Z]" | r"[^a-zA-Z0-9]")`` implementation: an
+    accented or non-Latin letter is *not* an ASCII lower/upper character, so it
+    counts as ``special``. ``digit`` mirrors ``re``'s ``\\d`` for ``str``
+    patterns, which matches any Unicode decimal digit. Keeping this helper in
+    one place guarantees the two call sites below cannot drift apart.
+    """
+    has_lower = any("a" <= c <= "z" for c in password)
+    has_upper = any("A" <= c <= "Z" for c in password)
+    has_digit = any(c.isdecimal() for c in password)
+    has_special = any(
+        not ("a" <= c <= "z" or "A" <= c <= "Z" or "0" <= c <= "9")
+        for c in password
+    )
+    return has_lower, has_upper, has_digit, has_special
+
+
 def estimate_entropy(password: str) -> float:
     """Estimate password entropy in bits using NIST SP 800-63B approximation."""
-    # Character pool sizes using standard library
-    has_lower = any(c.islower() for c in password)
-    has_upper = any(c.isupper() for c in password)
-    has_digit = any(c.isdigit() for c in password)
-    has_special = any(not c.isalnum() for c in password)
+    has_lower, has_upper, has_digit, has_special = _char_classes(password)
 
     pool_size = 0
     if has_lower:
@@ -48,10 +66,7 @@ def validate_password_strength(password: str) -> None:
         raise VaultError("Password must be at least 12 characters long")
 
     # Check character classes using standard library
-    has_lower = any(c.islower() for c in password)
-    has_upper = any(c.isupper() for c in password)
-    has_digit = any(c.isdigit() for c in password)
-    has_special = any(not c.isalnum() for c in password)
+    has_lower, has_upper, has_digit, has_special = _char_classes(password)
 
     char_classes = sum([has_lower, has_upper, has_digit, has_special])
     if char_classes < 3:
