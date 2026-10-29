@@ -8,51 +8,72 @@ from typing import Any
 
 AUDIT_MAX_BYTES = 1_048_576
 AUDIT_MAX_BACKUPS = 5
-
-
 def write_audit_event(audit_log_path: Path, action: str, status: str, secret_id: str | None = None, details: dict[str, Any] | None = None) -> None:
+    """
+    Write an audit event to the log file.
+    
+    Args:
+        audit_log_path: Path to the audit log file.
+        action: Action being performed (e.g., "unlock", "add_secret").
+        status: Status of the action (e.g., "success", "failure").
+        secret_id: Optional ID of the secret affected.
+        details: Optional additional details about the event.
+    """
     audit_log_path.parent.mkdir(parents=True, exist_ok=True)
     _rotate_audit_log_if_needed(audit_log_path)
+    
+    # Build event dictionary
     event = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "action": action,
         "status": status,
     }
+    
     if secret_id:
         event["secret_id"] = secret_id
     if details:
         event["details"] = details
+    
+    # Append to log file
     with audit_log_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(event, separators=(",", ":")) + "\n")
+    
+    # Set restrictive permissions
     os.chmod(audit_log_path, 0o600)
-
-
 def _rotate_audit_log_if_needed(audit_log_path: Path) -> None:
+    """
+    Rotate the audit log if it exceeds the maximum size.
+    
+    Args:
+        audit_log_path: Path to the audit log file.
+    """
     if not audit_log_path.exists():
         return
+    
     if audit_log_path.stat().st_size < AUDIT_MAX_BYTES:
         return
-
+    
+    # Remove oldest backup (.5)
     oldest_backup = audit_log_path.with_name(f"{audit_log_path.name}.{AUDIT_MAX_BACKUPS}")
     if oldest_backup.exists():
         oldest_backup.unlink()
-
+    
+    # Shift backups (e.g., .4 → .5, .3 → .4, etc.)
     for index in range(AUDIT_MAX_BACKUPS - 1, 0, -1):
         src = audit_log_path.with_name(f"{audit_log_path.name}.{index}")
         dst = audit_log_path.with_name(f"{audit_log_path.name}.{index + 1}")
         if src.exists():
             os.replace(src, dst)
-
+    
+    # Move current log to backup .1
     os.replace(audit_log_path, audit_log_path.with_name(f"{audit_log_path.name}.1"))
+    
+    # Create new empty log file
     audit_log_path.touch()
     os.chmod(audit_log_path, 0o600)
-
-
 # ------------------------------------------------------------------
 # Audit log query interface
 # ------------------------------------------------------------------
-
-
 def query_audit_log(
     audit_log_path: Path,
     *,
@@ -84,6 +105,7 @@ def query_audit_log(
     all_logs: list[Path] = []
     if audit_log_path.exists():
         all_logs.append(audit_log_path)
+    
     # Backups are numbered oldest → newest (e.g. .1 is newest backup, .5 is oldest)
     # We want newest-first overall, so load backups in reverse order
     backups = sorted(
@@ -101,6 +123,7 @@ def query_audit_log(
                 line = line.strip()
                 if not line:
                     continue
+                
                 try:
                     event = json.loads(line)
                 except (json.JSONDecodeError, ValueError):
@@ -120,6 +143,7 @@ def query_audit_log(
                         ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
                     except ValueError:
                         continue
+                    
                     if since is not None and ts < since:
                         continue
                     if until is not None and ts > until:

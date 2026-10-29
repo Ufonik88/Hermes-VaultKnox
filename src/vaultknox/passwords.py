@@ -3,18 +3,33 @@
 from __future__ import annotations
 
 import math
-import re
 
 from vaultknox.exceptions import VaultError
 
 
+def _count_char_classes(password: str) -> int:
+    """Count how many character classes the password contains.
+    
+    Character classes: lowercase, uppercase, digits, special characters.
+    Returns integer count (0-4).
+    """
+    classes = 0
+    if any(c.islower() for c in password):
+        classes += 1
+    if any(c.isupper() for c in password):
+        classes += 1
+    if any(c.isdigit() for c in password):
+        classes += 1
+    if any(not c.isalnum() for c in password):
+        classes += 1
+    return classes
 def estimate_entropy(password: str) -> float:
     """Estimate password entropy in bits using NIST SP 800-63B approximation."""
-    # Character pool sizes
-    has_lower = bool(re.search(r"[a-z]", password))
-    has_upper = bool(re.search(r"[A-Z]", password))
-    has_digit = bool(re.search(r"\d", password))
-    has_special = bool(re.search(r"[^a-zA-Z0-9]", password))
+    # Character pool sizes for common character classes
+    has_lower = any(c.islower() for c in password)
+    has_upper = any(c.isupper() for c in password)
+    has_digit = any(c.isdigit() for c in password)
+    has_special = any(not c.isalnum() for c in password)
 
     pool_size = 0
     if has_lower:
@@ -31,8 +46,6 @@ def estimate_entropy(password: str) -> float:
 
     # Entropy = log2(pool_size^length) = length * log2(pool_size)
     return len(password) * math.log2(pool_size)
-
-
 def validate_password_strength(password: str) -> None:
     """
     Validate password meets minimum strength requirements.
@@ -48,13 +61,8 @@ def validate_password_strength(password: str) -> None:
     if len(password) < 12:
         raise VaultError("Password must be at least 12 characters long")
 
-    # Check character classes
-    has_lower = bool(re.search(r"[a-z]", password))
-    has_upper = bool(re.search(r"[A-Z]", password))
-    has_digit = bool(re.search(r"\d", password))
-    has_special = bool(re.search(r"[^a-zA-Z0-9]", password))
-
-    char_classes = sum([has_lower, has_upper, has_digit, has_special])
+    # Count character classes
+    char_classes = _count_char_classes(password)
     if char_classes < 3:
         raise VaultError("Password must contain at least 3 of: lowercase, uppercase, digits, special characters")
 
@@ -62,9 +70,12 @@ def validate_password_strength(password: str) -> None:
     entropy = estimate_entropy(password)
     if entropy < 40:
         raise VaultError(f"Password entropy too low ({entropy:.1f} bits). Minimum 40 bits required.")
-
-
 def validate_password_strength_or_raise(password: str, skip_check: bool = False) -> None:
-    """Validate password strength unless skip_check is True."""
+    """Validate password strength unless skip_check is True.
+    
+    This wrapper provides backward compatibility and allows
+    for optional password validation during initialization
+    and password changes.
+    """
     if not skip_check:
         validate_password_strength(password)
