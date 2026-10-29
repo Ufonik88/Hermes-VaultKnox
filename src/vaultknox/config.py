@@ -13,29 +13,42 @@ DEFAULT_MAX_ATTEMPTS = 5
 PRIVATE_FILE_MODE = 0o600
 PRIVATE_DIR_MODE = 0o700
 DEFAULT_KDF_PARAMS = _DEFAULT_KDF_PARAMS
-
 @dataclass(slots=True)
 class VaultPaths:
+    """Container for all vault file paths."""
     base_dir: Path
 
     @property
     def db_path(self) -> Path:
+        """Get the path to the SQLite database file."""
         return self.base_dir / "secrets.db"
 
     @property
     def audit_log_path(self) -> Path:
+        """Get the path to the audit log file."""
         return self.base_dir / "audit.log"
 
     @property
     def session_path(self) -> Path:
+        """Get the path to the session store file."""
         return self.base_dir / "session.json"
 
     @property
     def session_lock_path(self) -> Path:
+        """Get the path to the session lock file."""
         return self.base_dir / "session.lock"
 
-
 def expand_runtime_path(path: str | Path | None = None, profile: str | None = None) -> VaultPaths:
+    """
+    Expand a runtime path to an absolute path.
+    
+    Args:
+        path: Optional base path. If None, uses default ~/.hermes.
+        profile: Optional profile name. If provided, uses ~/.hermes/vaultknox-profiles/<profile>.
+    
+    Returns:
+        VaultPaths: Object containing the resolved paths.
+    """
     if path is None:
         base = Path.home() / ".hermes"
         if profile:
@@ -43,21 +56,36 @@ def expand_runtime_path(path: str | Path | None = None, profile: str | None = No
         else:
             path = base / "vaultknox"
     return VaultPaths(Path(path).expanduser().resolve())
-
-
 def set_private_file_permissions(path: Path) -> None:
+    """
+    Set restrictive permissions (0o600) on a file if it exists.
+    
+    Args:
+        path: Path to the file to modify.
+    """
     if path.exists():
         os.chmod(path, PRIVATE_FILE_MODE)
-
-
 def create_private_dir(path: Path) -> None:
-    """Create a directory with restrictive permissions (0o700)."""
+    """
+    Create a directory with restrictive permissions (0o700).
+    
+    Args:
+        path: Path to the directory to create.
+    """
     path.mkdir(parents=True, exist_ok=True)
     os.chmod(path, PRIVATE_DIR_MODE)
-
-
 def write_private_file(path: Path, data: str | bytes, encoding: str = "utf-8") -> None:
-    """Write a file atomically with restrictive permissions (0o600)."""
+    """
+    Write data to a file atomically with restrictive permissions (0o600).
+    
+    Args:
+        path: Path to the file to write.
+        data: String or bytes data to write.
+        encoding: Text encoding to use (default: utf-8).
+    
+    Raises:
+        Any exceptions from underlying file operations.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     # Write to a temporary file first, then atomically rename
     import tempfile

@@ -526,21 +526,41 @@ class VaultKnox:
         return key
 
     def _decode_metadata(self, meta_key: bytes, metadata: Any) -> dict[str, Any]:
-        if not metadata:
-            return {}
+        """
+        Decode metadata from either encrypted or plain JSON format.
+        
+        Args:
+            meta_key: Key used to decrypt metadata if encrypted.
+            metadata: Metadata as dict, string, or other type.
+        
+        Returns:
+            Decoded metadata as dict, or empty dict on failure.
+        """
+        # Fast path: already decoded dict
         if isinstance(metadata, dict):
             return metadata
-        if not isinstance(metadata, str):
+        
+        # Handle None or empty metadata
+        if not metadata:
             return {}
-        try:
-            return decrypt_metadata(meta_key, metadata)
-        except Exception:
-            pass
-        try:
-            decoded = json.loads(metadata)
-        except Exception:
-            return {}
-        return decoded if isinstance(decoded, dict) else {}
+        
+        # Handle string metadata (either encrypted or plain JSON)
+        if isinstance(metadata, str):
+            # Try to decrypt first
+            try:
+                return decrypt_metadata(meta_key, metadata)
+            except Exception:
+                pass
+            
+            # If decryption fails, try to parse as JSON
+            try:
+                decoded = json.loads(metadata)
+                return decoded if isinstance(decoded, dict) else {}
+            except Exception:
+                return {}
+        
+        # Unknown type - return empty dict
+        return {}
 
     def _require_unlocked(self) -> None:
         if not self.sessions.is_unlocked():
