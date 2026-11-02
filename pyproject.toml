@@ -26,11 +26,21 @@ classifiers = [
 dependencies = [
   "argon2-cffi>=23.1.0",
   "click>=8.1.0",
-  "cryptography>=42.0.0",
+  "cryptography>=50.0.0",
   "httpx>=0.27.0",
-  "mcp>=1.1.0,<2.0.0",
+  "mcp>=1.30.0,<2.0.0",
   "pyyaml>=6.0",
   "requests>=2.25.0",
+  # Security floor for transitive dependencies (MNT W44 pip-audit remediation).
+  # Lowest fixed versions that resolve together for the W43 scan findings:
+  # anyio>=4.14.2, certifi>=2026.10.19, pydantic-settings>=2.14.2,
+  # PyJWT>=2.14.0, starlette>=1.3.1, urllib3>=2.8.0
+  "anyio>=4.14.2",
+  "certifi>=2026.10.19",
+  "pydantic-settings>=2.14.2",
+  "PyJWT>=2.14.0",
+  "starlette>=1.3.1",
+  "urllib3>=2.8.0",
 ]
 
 [project.optional-dependencies]
