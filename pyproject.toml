@@ -66,7 +66,7 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-vaultknox = ["assets/*.svg", "assets/*.png"]
+vaultknox = ["assets/*.svg", "assets/*.png", "_hermes_plugin/plugin.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
