@@ -1,0 +1,88 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build twine
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Twine check
+        run: twine check dist/*
+
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install the freshly built wheel into a clean venv
+        run: |
+          python -m venv /tmp/smoke-venv
+          /tmp/smoke-venv/bin/pip install --upgrade pip
+          /tmp/smoke-venv/bin/pip install dist/*.whl
+
+      - name: CLI entry point responds
+        run: /tmp/smoke-venv/bin/hermes-vault --version
+
+      - name: Plugin manifest loads from the installed wheel
+        run: |
+          /tmp/smoke-venv/bin/python - <<'PY'
+          import pathlib
+          import vaultknox
+          import yaml
+          manifest = pathlib.Path(vaultknox.__file__).parent / "_hermes_plugin" / "plugin.yaml"
+          data = yaml.safe_load(manifest.read_text())
+          assert isinstance(data, dict) and data, f"plugin manifest missing or unparseable: {manifest}"
+          print(f"OK: {manifest} ({len(data)} top-level keys)")
+          PY
+
+  publish:
+    needs: [build, smoke]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI via Trusted Publishing (OIDC, no stored token)
+        uses: pypa/gh-action-pypi-publish@release/v1

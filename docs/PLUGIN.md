@@ -141,6 +141,23 @@ hermes-vault install-hooks   # refresh the deployed copies
 
 Restart the Hermes gateway after `install-hooks` completes.
 
+> Until the first PyPI release is tagged (see the release path below), `pip install -U vaultknox` cannot resolve — install from git instead: `pip install -U git+https://github.com/Ufonik88/Hermes-VaultKnox`.
+
+## PyPI Release Path (owner)
+
+Releases are cut by pushing a tag matching `v*`. The `.github/workflows/release.yml` workflow then: builds the sdist and wheel (`python -m build`), runs `twine check dist/*`, installs the freshly built wheel into a clean venv and asserts `hermes-vault --version` plus a plugin-manifest load (smoke), and only then publishes to PyPI via **Trusted Publishing** (OIDC). No PyPI token is stored in repository secrets.
+
+One-time owner setup (required before the first release):
+
+1. On pypi.org, add a **pending Trusted Publisher** for the project (it does not exist on PyPI yet): account settings → Publishing → add a pending publisher with:
+   - PyPI project name: `vaultknox`
+   - Owner: `Ufonik88`, repository: `Hermes-VaultKnox`
+   - Workflow filename: `release.yml`
+   - Environment name: `pypi`
+2. On GitHub, create the `pypi` environment (repo → Settings → Environments → New environment → `pypi`). It needs no secrets; Trusted Publishing authenticates the workflow run's OIDC token.
+
+Per release: bump `version` in `pyproject.toml` and `src/vaultknox/__init__.py`, commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The workflow builds, smoke-tests, and publishes; the `pip install -U vaultknox` command above becomes real from that tag on.
+
 ## Troubleshooting
 
 ### Plugin loads but nothing happens
