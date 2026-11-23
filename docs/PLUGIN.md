@@ -141,6 +141,27 @@ hermes-vault install-hooks   # refresh the deployed copies
 
 Restart the Hermes gateway after `install-hooks` completes.
 
+> Until the first PyPI release is tagged (see the release path below), `pip install -U vaultknox` cannot resolve — install from git instead: `pip install -U git+https://github.com/Ufonik88/Hermes-VaultKnox`.
+
+## PyPI Release Path (owner)
+
+Releases are cut by pushing a tag matching `v*`. The `.github/workflows/release.yml` workflow then: builds the sdist and wheel (`python -m build`), runs `twine check dist/*`, installs the freshly built wheel into a clean venv and asserts `hermes-vault --version` plus a plugin-manifest load (smoke), and only then publishes to PyPI via **Trusted Publishing** (OIDC). No PyPI token is stored in repository secrets.
+
+One-time owner setup (required before the first release):
+
+1. On pypi.org, add a **pending Trusted Publisher** for the project (it does not exist on PyPI yet): account settings → Publishing → add a pending publisher with:
+   - PyPI project name: `vaultknox`
+   - Owner: `Ufonik88`, repository: `Hermes-VaultKnox`
+   - Workflow filename: `release.yml`
+   - Environment name: `pypi`
+2. On GitHub, create the `pypi` environment (repo → Settings → Environments → New environment → `pypi`) and **add `Ufonik88` as a required reviewer**. The environment needs no secrets; Trusted Publishing authenticates the workflow run's OIDC token. The required reviewer is what stops a tag on an unreviewed commit from reaching PyPI: the publish job waits for approval.
+
+Per release, bump **all three** version fields — `pyproject.toml` (`[project] version`), `src/vaultknox/__init__.py` (`__version__`), and `src/vaultknox/_hermes_plugin/plugin.yaml` (`version:`) — commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`.
+
+The workflow refuses to publish unless the tag, both version fields and the plugin manifest agree, and it runs the test suite before building. It then builds, twine-checks, smoke-tests the wheel in a clean venv, and publishes; `pip install -U vaultknox` becomes real from that tag on.
+
+Action pins: every `uses:` in `release.yml` is a full commit SHA with the release tag in a trailing comment. Update a pin deliberately — bumping the comment without the SHA does nothing.
+
 ## Troubleshooting
 
 ### Plugin loads but nothing happens
