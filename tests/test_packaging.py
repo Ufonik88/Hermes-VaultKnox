@@ -34,6 +34,7 @@ import yaml
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 SOURCE_MANIFEST = REPO_ROOT / "src" / "vaultknox" / "_hermes_plugin" / "plugin.yaml"
 WHEEL_MANIFEST = "vaultknox/_hermes_plugin/plugin.yaml"
+PLUGIN_PATH_IN_PACKAGE = "_hermes_plugin/plugin.yaml"
 
 
 def test_source_plugin_manifest_exists_and_parses() -> None:
@@ -99,7 +100,21 @@ def test_plugin_yaml_is_listed_in_package_data() -> None:
         f"package-data {entries!r} has no _hermes_plugin entry — the declared "
         f"inclusion of the plugin manifest is gone (Issue #10, PR #13)"
     )
-    assert any(fnmatch.fnmatch("plugin.yaml", g.rsplit("/", 1)[-1]) for g in plugin_globs), (
-        f"package-data globs {plugin_globs!r} do not cover _hermes_plugin/plugin.yaml "
+    assert any(_glob_covers(PLUGIN_PATH_IN_PACKAGE, g) for g in plugin_globs), (
+        f"package-data globs {plugin_globs!r} do not cover {PLUGIN_PATH_IN_PACKAGE} "
         f"— the wheel declaration for the plugin manifest is broken (Issue #10)"
     )
+
+
+def _glob_covers(rel_path: str, pattern: str) -> bool:
+    """Whether a setuptools package-data glob covers ``rel_path``.
+
+    setuptools matches ``*``/``?`` within one path segment only, so a glob is
+    compared segment by segment against the full relative path — matching the
+    basename alone would let ``other_plugin/plugin.yaml`` pass.
+    """
+    path_parts = rel_path.split("/")
+    glob_parts = pattern.split("/")
+    if len(path_parts) != len(glob_parts):
+        return False
+    return all(fnmatch.fnmatchcase(part, glob) for part, glob in zip(path_parts, glob_parts, strict=True))

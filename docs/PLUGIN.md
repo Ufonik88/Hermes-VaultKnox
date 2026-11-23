@@ -154,9 +154,13 @@ One-time owner setup (required before the first release):
    - Owner: `Ufonik88`, repository: `Hermes-VaultKnox`
    - Workflow filename: `release.yml`
    - Environment name: `pypi`
-2. On GitHub, create the `pypi` environment (repo → Settings → Environments → New environment → `pypi`). It needs no secrets; Trusted Publishing authenticates the workflow run's OIDC token.
+2. On GitHub, create the `pypi` environment (repo → Settings → Environments → New environment → `pypi`) and **add `Ufonik88` as a required reviewer**. The environment needs no secrets; Trusted Publishing authenticates the workflow run's OIDC token. The required reviewer is what stops a tag on an unreviewed commit from reaching PyPI: the publish job waits for approval.
 
-Per release: bump `version` in `pyproject.toml` and `src/vaultknox/__init__.py`, commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The workflow builds, smoke-tests, and publishes; the `pip install -U vaultknox` command above becomes real from that tag on.
+Per release, bump **all three** version fields — `pyproject.toml` (`[project] version`), `src/vaultknox/__init__.py` (`__version__`), and `src/vaultknox/_hermes_plugin/plugin.yaml` (`version:`) — commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`.
+
+The workflow refuses to publish unless the tag, both version fields and the plugin manifest agree, and it runs the test suite before building. It then builds, twine-checks, smoke-tests the wheel in a clean venv, and publishes; `pip install -U vaultknox` becomes real from that tag on.
+
+Action pins: every `uses:` in `release.yml` is a full commit SHA with the release tag in a trailing comment. Update a pin deliberately — bumping the comment without the SHA does nothing.
 
 ## Troubleshooting
 
