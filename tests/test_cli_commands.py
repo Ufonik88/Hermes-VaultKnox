@@ -16,6 +16,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
+from vaultknox import __version__
 from vaultknox.cli import main
 
 PASSWORD = "cli-test-master-pass-2026"
@@ -97,3 +98,10 @@ def test_unlock_then_list_flow(tmp_path: Path) -> None:
     result = _run(tmp_path, ["list"])
     assert result.exit_code == 0, result.output
     assert "cli_key" in result.output
+
+
+def test_version_flag_prints_package_version() -> None:
+    """`hermes-vault --version` must exit 0 and print the package version."""
+    result = CliRunner().invoke(main, ["--version"])
+    assert result.exit_code == 0, result.output
+    assert __version__ in result.output

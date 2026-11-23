@@ -7,6 +7,7 @@ from typing import Any
 
 import click
 
+from vaultknox import __version__
 from vaultknox.autonomous_secrets import AutonomousSecretsStore
 from vaultknox.branding import get_logo_asset_path, get_logo_banner
 from vaultknox.config import expand_runtime_path
@@ -62,6 +63,7 @@ def _prompt_secret_payload(secret_type: str) -> dict[str, Any]:
 
 
 @click.group(cls=_VaultGroup)
+@click.version_option(__version__, prog_name="hermes-vault")
 @click.option("--runtime-dir", type=click.Path(path_type=Path), default=None, help="Override the runtime vault directory.")
 @click.option("--profile", type=str, default=None, help="Vault profile name (uses ~/.hermes/vaultknox-profiles/<name>).")
 @click.option("--logo", "show_logo", is_flag=True, default=False, help="Display the VaultKnox ASCII logo before command output.")
